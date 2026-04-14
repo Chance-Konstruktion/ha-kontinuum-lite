@@ -1,0 +1,13 @@
+evaluate:
+  name: Evaluate
+  description: >-
+    Run one engine tick and, if the current surprise crosses the anomaly
+    threshold, fire a `kontinuum_lite_anomaly` event on the bus.
+  fields:
+    payload:
+      name: Payload
+      description: Optional observation payload forwarded to the engine.
+      required: false
+      example: '{"source": "manual"}'
+      selector:
+        object:
