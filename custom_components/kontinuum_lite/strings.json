@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "KONTINUUM Lite",
+        "description": "Minimal, headless neuroinspired learning substrate.",
+        "data": {
+          "name": "Name"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "KONTINUUM Lite is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "surprise": {
+        "name": "Surprise"
+      },
+      "learning_state": {
+        "name": "Learning state",
+        "state": {
+          "cold_start": "Cold start",
+          "learning": "Learning",
+          "stable": "Stable"
+        }
+      }
+    },
+    "binary_sensor": {
+      "anomaly": {
+        "name": "Anomaly"
+      }
+    }
+  },
+  "services": {
+    "evaluate": {
+      "name": "Evaluate",
+      "description": "Run one engine tick; fires kontinuum_lite_anomaly if threshold crossed.",
+      "fields": {
+        "payload": {
+          "name": "Payload",
+          "description": "Optional observation payload forwarded to the engine."
+        }
+      }
+    }
+  }
+}
