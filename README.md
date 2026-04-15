@@ -51,9 +51,15 @@ Event-Bus, sobald der Surprise-Wert die Anomalie-Schwelle kreuzt.
 
 ## Status
 
-**Phase 0** — das Engine-Modul ist ein Stub mit Platzhalter-Werten. Die echte
-Lern-Engine (`kontinuum-core`) wird in Phase 1 vendored oder über PyPI
-nachgezogen. Siehe [ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kontinuum/blob/main/ROADMAP.md).
+**Phase 0** — das Engine-Modul ist ein Stub mit deterministischen
+Platzhalter-Werten:
+- Tick-Counter + Lernzustand (`cold_start` → `learning` → `stable`)
+- Surprise als reproduzierbarer 0..1-Sägezahn (für Automations-Tests)
+- Anomalie bei Surprise-Schwelle (Default: `0.75`)
+
+Die echte Lern-Engine (`kontinuum-core`) wird in Phase 1 vendored oder über
+PyPI nachgezogen. Siehe
+[ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kontinuum/blob/main/ROADMAP.md).
 
 ## Lizenz
 
