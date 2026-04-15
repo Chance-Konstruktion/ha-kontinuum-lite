@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import STATE_COLD_START, STATE_LEARNING, STATE_STABLE
+from .const import ANOMALY_THRESHOLD, STATE_COLD_START, STATE_LEARNING, STATE_STABLE
 
 
 @dataclass
@@ -42,6 +42,7 @@ class LiteEngine:
     # Phase-0 heuristic: how many observe() calls before we leave cold-start.
     _COLD_START_TICKS = 10
     _STABLE_TICKS = 100
+    _SURPRISE_PERIOD = 20
 
     def __init__(self) -> None:
         self._snapshot = EngineSnapshot()
@@ -52,8 +53,11 @@ class LiteEngine:
         """Ingest one observation and advance internal state."""
         self._snapshot.tick_count += 1
         self._snapshot.learning_state = self._derive_learning_state()
-        # Phase-0 stub: surprise stays 0.0, anomaly False.
+        # Phase-0 stub: deterministic placeholder values.
         # Phase-1 replaces this with predictive_processing output.
+        self._snapshot.surprise = self._derive_surprise()
+        self._snapshot.anomaly = self._snapshot.surprise >= ANOMALY_THRESHOLD
+        self._snapshot.extra = payload or {}
         return self._snapshot
 
     def evaluate(self, payload: dict[str, Any] | None = None) -> EngineSnapshot:
@@ -75,3 +79,8 @@ class LiteEngine:
         if t < self._STABLE_TICKS:
             return STATE_LEARNING
         return STATE_STABLE
+
+    def _derive_surprise(self) -> float:
+        """Generate a deterministic 0..1 sawtooth so automations can be tested."""
+        phase = (self._snapshot.tick_count % self._SURPRISE_PERIOD) / self._SURPRISE_PERIOD
+        return round(phase, 3)

@@ -32,20 +32,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _handle_evaluate(call: ServiceCall) -> None:
         """Run one engine tick and push updates to entities."""
-        payload: dict[str, Any] = dict(call.data)
+        payload_raw: Any = call.data.get("payload")
+        payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+        previous_surprise = engine.snapshot.surprise
         snap = engine.evaluate(payload)
 
         # Notify entities.
         async_dispatcher_send(hass, SIGNAL_UPDATE)
 
         # Fire event when anomaly threshold is crossed.
-        if snap.surprise >= ANOMALY_THRESHOLD or snap.anomaly:
+        crossed_threshold = (
+            previous_surprise < ANOMALY_THRESHOLD <= snap.surprise
+        )
+        if crossed_threshold or snap.anomaly:
             hass.bus.async_fire(
                 EVENT_ANOMALY,
                 {
                     "surprise": snap.surprise,
                     "learning_state": snap.learning_state,
                     "tick": snap.tick_count,
+                    "payload": payload,
                 },
             )
 
