@@ -1,20 +1,21 @@
-"""Stub engine for KONTINUUM Lite (Phase 0).
+"""Lite engine for KONTINUUM Lite (Phase 1).
 
-This placeholder mirrors the future ``kontinuum_core.KontinuumEngine``
-contract (see ROADMAP.md §4 in ha-kontinuum). It returns deterministic
-dummy values so the integration boots end-to-end without depending on
-the Pro integration.
+Thin wrapper around ``kontinuum_core.KontinuumEngine``. The Lite
+integration ships only the minimal HA-side glue (config flow, sensors,
+services); all neuro-inspired logic lives in the core package.
 
-Phase 1 replaces the internals with vendored core modules (hippocampus,
-predictive_processing, metaplasticity, ...). The public surface
-(``observe`` / ``evaluate`` / ``snapshot``) must remain stable.
+The public surface (``observe`` / ``evaluate`` / ``snapshot``) is kept
+stable so HA entities and automations written against Phase 0 continue
+to work.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import ANOMALY_THRESHOLD, STATE_COLD_START, STATE_LEARNING, STATE_STABLE
+from kontinuum_core import KontinuumEngine
+
+from .const import ANOMALY_THRESHOLD, STATE_COLD_START
 
 
 @dataclass
@@ -29,35 +30,36 @@ class EngineSnapshot:
 
 
 class LiteEngine:
-    """Tiny placeholder engine.
+    """HA-side wrapper around ``KontinuumEngine``.
 
-    Responsibilities in Phase 0:
-      * hold a monotonic tick counter
-      * expose a stable snapshot shape
-      * flip learning_state after N ticks so UI has something to show
-
-    Phase 1 TODO: delegate to ``kontinuum_core.KontinuumEngine``.
+    Responsibilities:
+      * own a single ``KontinuumEngine`` instance
+      * translate HA state-change payloads into core observations
+      * project the core snapshot into the Lite ``EngineSnapshot`` shape
     """
 
-    # Phase-0 heuristic: how many observe() calls before we leave cold-start.
-    _COLD_START_TICKS = 10
-    _STABLE_TICKS = 100
-    _SURPRISE_PERIOD = 20
-
     def __init__(self) -> None:
+        self._core = KontinuumEngine()
         self._snapshot = EngineSnapshot()
+
+    # ---- Entity wiring ----------------------------------------------
+
+    def register_entity(self, entity_id: str, **kwargs: Any) -> None:
+        """Register an HA entity with the core thalamus."""
+        self._core.register_entity(entity_id, **kwargs)
 
     # ---- Data flow ---------------------------------------------------
 
     def observe(self, payload: dict[str, Any] | None = None) -> EngineSnapshot:
         """Ingest one observation and advance internal state."""
-        self._snapshot.tick_count += 1
-        self._snapshot.learning_state = self._derive_learning_state()
-        # Phase-0 stub: deterministic placeholder values.
-        # Phase-1 replaces this with predictive_processing output.
-        self._snapshot.surprise = self._derive_surprise()
-        self._snapshot.anomaly = self._snapshot.surprise >= ANOMALY_THRESHOLD
-        self._snapshot.extra = payload or {}
+        core_snap = self._core.observe(payload or {})
+        self._snapshot = EngineSnapshot(
+            surprise=float(core_snap.surprise),
+            anomaly=core_snap.surprise >= ANOMALY_THRESHOLD,
+            learning_state=core_snap.learning_state,
+            tick_count=core_snap.tick_count,
+            extra=core_snap.extra or {},
+        )
         return self._snapshot
 
     def evaluate(self, payload: dict[str, Any] | None = None) -> EngineSnapshot:
@@ -70,17 +72,7 @@ class LiteEngine:
     def snapshot(self) -> EngineSnapshot:
         return self._snapshot
 
-    # ---- Internals ---------------------------------------------------
-
-    def _derive_learning_state(self) -> str:
-        t = self._snapshot.tick_count
-        if t < self._COLD_START_TICKS:
-            return STATE_COLD_START
-        if t < self._STABLE_TICKS:
-            return STATE_LEARNING
-        return STATE_STABLE
-
-    def _derive_surprise(self) -> float:
-        """Generate a deterministic 0..1 sawtooth so automations can be tested."""
-        phase = (self._snapshot.tick_count % self._SURPRISE_PERIOD) / self._SURPRISE_PERIOD
-        return round(phase, 3)
+    @property
+    def core(self) -> KontinuumEngine:
+        """Direct access to the underlying core engine (advanced use)."""
+        return self._core
