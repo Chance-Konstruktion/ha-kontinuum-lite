@@ -15,8 +15,10 @@ from .const import (
     EVENT_ANOMALY,
     SERVICE_EVALUATE,
     SIGNAL_UPDATE,
+    STORAGE_DIR,
 )
 from .engine import LiteEngine
+from .ha_scheduler import HAScheduler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,8 +27,21 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up KONTINUUM Lite from a config entry."""
-    engine = LiteEngine()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = engine
+    scheduler = HAScheduler(hass)
+    storage_path = hass.config.path(STORAGE_DIR)
+    engine = LiteEngine(scheduler=scheduler, storage_path=storage_path)
+    bucket = hass.data.setdefault(DOMAIN, {})
+    bucket[entry.entry_id] = engine
+    bucket.setdefault("_schedulers", {})[entry.entry_id] = scheduler
+
+    # Best-effort: load persisted metaplasticity state and start its
+    # 24 h adaptation loop. Failures are non-fatal — the engine still
+    # works without it.
+    try:
+        await hass.async_add_executor_job(engine.core.metaplasticity.load)
+        engine.core.metaplasticity.start(interval_hours=24)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("MetaPlasticity bootstrap failed; continuing without it")
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -66,9 +81,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-        # Drop service if no entries remain.
-        if not hass.data[DOMAIN]:
+        bucket = hass.data.get(DOMAIN, {})
+        engine: LiteEngine | None = bucket.pop(entry.entry_id, None)
+        scheduler: HAScheduler | None = bucket.get("_schedulers", {}).pop(
+            entry.entry_id, None
+        )
+        if engine is not None:
+            try:
+                await hass.async_add_executor_job(engine.core.metaplasticity.save)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("MetaPlasticity save failed during unload")
+        if scheduler is not None:
+            scheduler.cancel_all()
+        # Drop service + container if no entries remain (ignore bookkeeping keys).
+        remaining = {k for k in bucket if not k.startswith("_")}
+        if not remaining:
             hass.services.async_remove(DOMAIN, SERVICE_EVALUATE)
             hass.data.pop(DOMAIN, None)
     return unload_ok

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from kontinuum_core import KontinuumEngine
+from kontinuum_core import KontinuumEngine, Scheduler
 
 from .const import ANOMALY_THRESHOLD, STATE_COLD_START
 
@@ -38,8 +38,15 @@ class LiteEngine:
       * project the core snapshot into the Lite ``EngineSnapshot`` shape
     """
 
-    def __init__(self) -> None:
-        self._core = KontinuumEngine()
+    def __init__(
+        self,
+        scheduler: Scheduler | None = None,
+        storage_path: str | None = None,
+    ) -> None:
+        self._core = KontinuumEngine(
+            scheduler=scheduler,
+            storage_path=storage_path,
+        )
         self._snapshot = EngineSnapshot()
 
     # ---- Entity wiring ----------------------------------------------
