@@ -2,6 +2,11 @@
 
 > Headless, lightweight variant of [KONTINUUM](https://github.com/Chance-Konstruktion/ha-kontinuum) — no UI, no brand assets, just the learning substrate.
 
+> **Teil der 3-Repo-Familie:**
+> [`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core) (HA-freie Lern-Engine, PyPI) ·
+> [`ha-kontinuum`](https://github.com/Chance-Konstruktion/ha-kontinuum) (volle Pro-Integration mit UI) ·
+> **ha-kontinuum-lite** (dieses Repo)
+
 ## Was ist das?
 
 `kontinuum-lite` ist eine schlanke Home-Assistant-Integration, die das
@@ -51,15 +56,15 @@ Event-Bus, sobald der Surprise-Wert die Anomalie-Schwelle kreuzt.
 
 ## Status
 
-**Phase 0** — das Engine-Modul ist ein Stub mit deterministischen
-Platzhalter-Werten:
-- Tick-Counter + Lernzustand (`cold_start` → `learning` → `stable`)
-- Surprise als reproduzierbarer 0..1-Sägezahn (für Automations-Tests)
+**Phase 1+** — die Engine delegiert vollständig an
+[`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core)
+(via `requirements: ["kontinuum-core>=0.1.1"]` im manifest):
+- Echte Lern-Pipeline (Thalamus → Hippocampus → Predictive Processing → …)
+- Lernzustand abgeleitet aus `hippocampus.total_events` und `accuracy`
 - Anomalie bei Surprise-Schwelle (Default: `0.75`)
+- Optional: 24 h MetaPlasticity-Loop via HAScheduler-Adapter
 
-Die echte Lern-Engine (`kontinuum-core`) wird in Phase 1 vendored oder über
-PyPI nachgezogen. Siehe
-[ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kontinuum/blob/main/ROADMAP.md).
+Siehe [ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kontinuum/blob/main/ROADMAP.md) für den Gesamtplan der 3-Repo-Architektur.
 
 ## Lizenz
 
