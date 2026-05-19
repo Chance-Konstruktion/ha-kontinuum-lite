@@ -28,3 +28,6 @@ ANOMALY_THRESHOLD: Final = 0.75
 
 # Signal names for intra-integration dispatch
 SIGNAL_UPDATE: Final = f"{DOMAIN}_update"
+
+# Sub-directory under hass.config for persistent state
+STORAGE_DIR: Final = "kontinuum_lite"
