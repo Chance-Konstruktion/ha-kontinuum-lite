@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
-    ANOMALY_THRESHOLD,
     DOMAIN,
     EVENT_ANOMALY,
     SERVICE_EVALUATE,
@@ -49,17 +48,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Run one engine tick and push updates to entities."""
         payload_raw: Any = call.data.get("payload")
         payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
-        previous_surprise = engine.snapshot.surprise
+        previously_anomalous = engine.snapshot.anomaly
         snap = engine.evaluate(payload)
 
         # Notify entities.
         async_dispatcher_send(hass, SIGNAL_UPDATE)
 
-        # Fire event when anomaly threshold is crossed.
-        crossed_threshold = (
-            previous_surprise < ANOMALY_THRESHOLD <= snap.surprise
-        )
-        if crossed_threshold or snap.anomaly:
+        # Fire event on the anomaly edge. The threshold itself lives in
+        # the core engine (adaptive, baseline + 2σ) — the integration
+        # only reacts to the core's decision.
+        if snap.anomaly and not previously_anomalous:
             hass.bus.async_fire(
                 EVENT_ANOMALY,
                 {

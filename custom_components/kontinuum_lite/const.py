@@ -23,7 +23,9 @@ STATE_COLD_START: Final = "cold_start"
 STATE_LEARNING: Final = "learning"
 STATE_STABLE: Final = "stable"
 
-# Anomaly threshold on surprise (0..1)
+# Deprecated: the anomaly threshold is now decided inside kontinuum-core
+# (adaptive, baseline + 2σ of recent surprise). Kept only so existing
+# imports don't break; no longer used by this integration.
 ANOMALY_THRESHOLD: Final = 0.75
 
 # Signal names for intra-integration dispatch
