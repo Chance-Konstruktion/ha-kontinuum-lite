@@ -15,7 +15,7 @@ from typing import Any
 
 from kontinuum_core import KontinuumEngine, Scheduler
 
-from .const import ANOMALY_THRESHOLD, STATE_COLD_START
+from .const import STATE_COLD_START
 
 
 @dataclass
@@ -62,7 +62,9 @@ class LiteEngine:
         core_snap = self._core.observe(payload or {})
         self._snapshot = EngineSnapshot(
             surprise=float(core_snap.surprise),
-            anomaly=core_snap.surprise >= ANOMALY_THRESHOLD,
+            # Anomalie-Entscheidung kommt vom Core: dort ist die Schwelle
+            # adaptiv (Baseline + 2σ) statt einer fixen Konstante.
+            anomaly=bool(core_snap.anomaly),
             learning_state=core_snap.learning_state,
             tick_count=core_snap.tick_count,
             extra=core_snap.extra or {},
