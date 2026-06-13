@@ -75,6 +75,45 @@ class LiteEngine:
         """Service-entry: run one tick and return the current snapshot."""
         return self.observe(payload)
 
+    # ---- Persistence -------------------------------------------------
+
+    @property
+    def supports_persistence(self) -> bool:
+        """True when the installed core can serialize its state (>= 0.1.2)."""
+        return callable(getattr(self._core, "to_dict", None)) and callable(
+            getattr(self._core, "from_dict", None)
+        )
+
+    def state_dict(self) -> dict[str, Any] | None:
+        """Serialize the full learned engine state for persistence.
+
+        Returns ``None`` when the installed ``kontinuum-core`` predates the
+        ``to_dict``/``from_dict`` API (< 0.1.2); the caller then keeps only
+        the metaplasticity meta-state, exactly as before — no crash, no
+        bogus file.
+        """
+        to_dict = getattr(self._core, "to_dict", None)
+        return to_dict() if callable(to_dict) else None
+
+    def restore(self, data: dict[str, Any]) -> bool:
+        """Restore engine state produced by :meth:`state_dict`.
+
+        Returns ``True`` when the core accepted the state, ``False`` when
+        persistence is unsupported by the installed core or ``data`` is not
+        a usable mapping (e.g. a corrupt/empty file).
+        """
+        from_dict = getattr(self._core, "from_dict", None)
+        if not callable(from_dict) or not isinstance(data, dict) or not data:
+            return False
+        from_dict(data)
+        # Reflect the restored tick count so the learning-state sensor shows
+        # continuity immediately; surprise/anomaly refresh on the next tick.
+        self._snapshot = EngineSnapshot(
+            learning_state=self._snapshot.learning_state,
+            tick_count=int(getattr(self._core, "tick_count", 0)),
+        )
+        return True
+
     # ---- Accessors ---------------------------------------------------
 
     @property

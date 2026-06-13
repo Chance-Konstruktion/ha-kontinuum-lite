@@ -1,7 +1,10 @@
 """KONTINUUM Lite integration (Phase 0 skeleton)."""
 from __future__ import annotations
 
+import gzip
+import json
 import logging
+import os
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -10,8 +13,10 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
+    BRAIN_FILE,
     DOMAIN,
     EVENT_ANOMALY,
+    SAVE_INTERVAL_SECONDS,
     SERVICE_EVALUATE,
     SIGNAL_UPDATE,
     STORAGE_DIR,
@@ -22,6 +27,39 @@ from .ha_scheduler import HAScheduler
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+
+
+def _brain_path(storage_path: str) -> str:
+    return os.path.join(storage_path, BRAIN_FILE)
+
+
+def _save_brain(engine: LiteEngine, brain_path: str) -> None:
+    """Persist the full learned engine state (blocking; run in executor).
+
+    Atomic via a temp file + os.replace so a crash mid-write can never
+    corrupt the brain. A no-op when the core is too old to serialize.
+    """
+    data = engine.state_dict()
+    if data is None:
+        return
+    os.makedirs(os.path.dirname(brain_path), exist_ok=True)
+    tmp = f"{brain_path}.tmp"
+    with gzip.open(tmp, "wt", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+    os.replace(tmp, brain_path)
+
+
+def _load_brain(engine: LiteEngine, brain_path: str) -> bool:
+    """Restore a persisted brain (blocking; run in executor).
+
+    Returns True if a brain was loaded. Missing/corrupt files are tolerated
+    (cold start) so a bad file never blocks startup.
+    """
+    if not os.path.exists(brain_path):
+        return False
+    with gzip.open(brain_path, "rt", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return engine.restore(data)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -41,6 +79,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         engine.core.metaplasticity.start(interval_hours=24)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("MetaPlasticity bootstrap failed; continuing without it")
+
+    # Restore the full learned brain so learning survives restarts. Without
+    # this the hippocampus/predictive/cerebellum/basal-ganglia state was
+    # rebuilt from zero on every reload. No-op on kontinuum-core < 0.1.2.
+    brain_path = _brain_path(storage_path)
+    try:
+        loaded = await hass.async_add_executor_job(_load_brain, engine, brain_path)
+        if loaded:
+            _LOGGER.info(
+                "KONTINUUM Lite: restored brain (%d ticks)",
+                engine.snapshot.tick_count,
+            )
+        elif not engine.supports_persistence:
+            _LOGGER.info(
+                "KONTINUUM Lite: installed kontinuum-core has no brain "
+                "persistence (needs >= 0.1.2); only metaplasticity is kept"
+            )
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Brain load failed; starting cold")
+
+    # Snapshot the brain periodically so an unclean shutdown (power loss,
+    # OS kill) loses at most SAVE_INTERVAL_SECONDS of learning. The unload
+    # handler does a final save. cancel_all() (on unload) stops this too.
+    scheduler.schedule_interval(
+        lambda: _save_brain(engine, brain_path), SAVE_INTERVAL_SECONDS
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -85,6 +149,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.entry_id, None
         )
         if engine is not None:
+            try:
+                brain_path = _brain_path(hass.config.path(STORAGE_DIR))
+                await hass.async_add_executor_job(_save_brain, engine, brain_path)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Brain save failed during unload")
             try:
                 await hass.async_add_executor_job(engine.core.metaplasticity.save)
             except Exception:  # noqa: BLE001

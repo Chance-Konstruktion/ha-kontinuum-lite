@@ -33,3 +33,10 @@ SIGNAL_UPDATE: Final = f"{DOMAIN}_update"
 
 # Sub-directory under hass.config for persistent state
 STORAGE_DIR: Final = "kontinuum_lite"
+
+# Full engine-state persistence (hippocampus, predictive, cerebellum,
+# basal ganglia, …). Requires kontinuum-core >= 0.1.2 (to_dict/from_dict);
+# on older cores brain persistence is a graceful no-op and only the
+# metaplasticity meta-state is kept.
+BRAIN_FILE: Final = "brain.json.gz"
+SAVE_INTERVAL_SECONDS: Final = 600  # snapshot the learned brain every 10 min
