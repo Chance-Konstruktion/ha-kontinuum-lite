@@ -8,6 +8,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## Unreleased
 
 ### Added
+- **Brain persistence across restarts.** The full learned engine state
+  (hippocampus n-grams, predictive surprise history + adaptive anomaly
+  threshold, cerebellum reflex rules, basal-ganglia Q-values, …) is now
+  saved and restored, not just the MetaPlasticity meta-state. Previously
+  every reload/restart rebuilt the brain from zero, so Lite never actually
+  accumulated learning across HA restarts.
+  - `LiteEngine.state_dict()` / `restore()` wrap the core
+    `to_dict`/`from_dict`. They degrade gracefully: on `kontinuum-core`
+    < 0.1.2 (no such API) `state_dict()` returns `None` and persistence is a
+    silent no-op — exactly the old behaviour, no crash.
+  - `_save_brain()` writes `brain.json.gz` atomically (temp file +
+    `os.replace`) so a crash mid-write cannot corrupt the brain; `_load_brain()`
+    tolerates a missing/corrupt file and cold-starts instead of failing setup.
+  - The brain is snapshotted every `SAVE_INTERVAL_SECONDS` (10 min) via the
+    `HAScheduler` and once more on unload, so an unclean shutdown loses at
+    most ~10 min of learning.
+  - **Note:** full effect requires `kontinuum-core>=0.1.2`. The `manifest.json`
+    pin stays `>=0.1.1` for now (0.1.2 not yet on PyPI); bump it to `>=0.1.2`
+    once the core release is published.
 - `.github/workflows/validate.yaml` — HACS validation on push/PR + daily cron.
 - `.github/workflows/hassfest.yaml` — Home Assistant integration linter.
 - `custom_components/kontinuum_lite/brand/icon.png` (256×256) and
