@@ -5,7 +5,7 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.1 (2026-06-13)
 
 ### Added
 - **Brain persistence across restarts.** The full learned engine state
@@ -24,9 +24,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   - The brain is snapshotted every `SAVE_INTERVAL_SECONDS` (10 min) via the
     `HAScheduler` and once more on unload, so an unclean shutdown loses at
     most ~10 min of learning.
-  - **Note:** full effect requires `kontinuum-core>=0.1.2`. The `manifest.json`
-    pin stays `>=0.1.1` for now (0.1.2 not yet on PyPI); bump it to `>=0.1.2`
-    once the core release is published.
 - `.github/workflows/validate.yaml` — HACS validation on push/PR + daily cron.
 - `.github/workflows/hassfest.yaml` — Home Assistant integration linter.
 - `custom_components/kontinuum_lite/brand/icon.png` (256×256) and
@@ -50,8 +47,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   directory under `hass.config.path`.
 
 ### Changed
-- `manifest.json` pins `kontinuum-core>=0.1.1` so the engine is pulled
-  from PyPI on install. No more vendored copies.
+- `manifest.json` now pins **`kontinuum-core>=0.1.2`** (published to PyPI) —
+  the release that adds the `to_dict`/`from_dict` API the brain persistence
+  above relies on. Integration version bumped to `0.2.1`. No vendored copies.
 - README banner cross-links the two sibling repos (`kontinuum-core`,
   `ha-kontinuum`).
 - README "Status" section rewritten from "Phase 0 — stub" to "Phase 1+"
