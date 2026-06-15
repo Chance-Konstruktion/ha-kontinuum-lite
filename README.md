@@ -58,10 +58,14 @@ Event-Bus, sobald der Surprise-Wert die Anomalie-Schwelle kreuzt.
 
 **Phase 1+** — die Engine delegiert vollständig an
 [`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core)
-(via `requirements: ["kontinuum-core>=0.1.1"]` im manifest):
+(via `requirements: ["kontinuum-core>=0.1.2"]` im manifest, installiert die
+jeweils aktuellste 0.x):
 - Echte Lern-Pipeline (Thalamus → Hippocampus → Predictive Processing → …)
 - Lernzustand abgeleitet aus `hippocampus.total_events` und `accuracy`
-- Anomalie bei Surprise-Schwelle (Default: `0.75`)
+- Anomalie bei **adaptiver** Surprise-Schwelle (robust: Median + MAD der
+  letzten Surprise-Werte, geklemmt auf `0.10`–`0.95`; bis ~30 Beobachtungen
+  gilt der Default `0.7`)
+- Gelerntes Gehirn wird über Neustarts hinweg persistiert
 - Optional: 24 h MetaPlasticity-Loop via HAScheduler-Adapter
 
 Siehe [ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kontinuum/blob/main/ROADMAP.md) für den Gesamtplan der 3-Repo-Architektur.
