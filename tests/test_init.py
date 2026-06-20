@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 import pytest
 
@@ -25,6 +26,20 @@ from custom_components.kontinuum_lite.const import (  # noqa: E402
 
 def _brain_file(hass: HomeAssistant) -> str:
     return os.path.join(hass.config.path(STORAGE_DIR), BRAIN_FILE)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_storage(hass: HomeAssistant):
+    """Wipe the persistent storage dir around each test.
+
+    pytest-homeassistant-custom-component shares one on-disk ``testing_config``
+    directory across the whole session, so a brain saved by one test would leak
+    into the next. Clear it before and after each test for true isolation.
+    """
+    path = hass.config.path(STORAGE_DIR)
+    shutil.rmtree(path, ignore_errors=True)
+    yield
+    shutil.rmtree(path, ignore_errors=True)
 
 
 async def _setup(hass: HomeAssistant, entities: list[str] | None = None):
@@ -74,14 +89,16 @@ async def test_reset_brain_service_clears_learning(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     await hass.services.async_call(DOMAIN, SERVICE_SAVE_BRAIN, {}, blocking=True)
     assert os.path.exists(_brain_file(hass))
+    original_engine = hass.data[DOMAIN][entry.entry_id]
 
     await hass.services.async_call(DOMAIN, SERVICE_RESET_BRAIN, {}, blocking=True)
     await hass.async_block_till_done()
 
-    # The snapshot is gone and the integration came back cold (new engine).
+    # The snapshot is deleted and the entry reloaded a fresh, cold engine.
+    # (It may immediately re-observe the entity's current state, so the proof
+    # of a reset is the erased file + a new engine instance, not a zero count.)
     assert not os.path.exists(_brain_file(hass))
-    engine = hass.data[DOMAIN][entry.entry_id]
-    assert engine.total_events == 0
+    assert hass.data[DOMAIN][entry.entry_id] is not original_engine
 
 
 async def test_observed_entity_feeds_engine(hass: HomeAssistant) -> None:
