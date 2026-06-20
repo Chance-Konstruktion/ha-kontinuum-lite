@@ -12,6 +12,8 @@ DEFAULT_NAME: Final = "KONTINUUM Lite"
 
 # Services & events
 SERVICE_EVALUATE: Final = "evaluate"
+SERVICE_RESET_BRAIN: Final = "reset_brain"
+SERVICE_SAVE_BRAIN: Final = "save_brain"
 EVENT_ANOMALY: Final = "kontinuum_lite_anomaly"
 
 # Entity object-ids / unique-id suffixes

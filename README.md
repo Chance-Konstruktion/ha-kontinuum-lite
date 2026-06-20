@@ -38,7 +38,15 @@ Engine — kein manuelles Scripting nötig.
 > `friendly_name` aus den HA-Registries. Entities ohne zuordenbaren Bereich
 > werden vom Core ggf. übersprungen — weise ihnen also einen Bereich zu.
 
-## Service (optional / fortgeschritten)
+## Services
+
+| Service | Zweck |
+|---|---|
+| `kontinuum_lite.evaluate` | Einen Engine-Tick aus manuellem Payload ausführen (Tests/Debug) |
+| `kontinuum_lite.save_brain` | Sofortige Momentaufnahme des Gehirns auf die Platte erzwingen |
+| `kontinuum_lite.reset_brain` | **Alles** Gelernte löschen und kalt neu starten (nicht umkehrbar) |
+
+### `evaluate` (optional / fortgeschritten)
 
 Für manuelles Einspeisen oder Tests:
 
@@ -58,6 +66,13 @@ Das Event enthält `surprise`, `learning_state`, `tick` und `entity_id`.
 > Hinweis: Ein Payload ohne `entity_id`/`new_state` (oder für eine nicht
 > ausgewählte/raumlose Entity) ist ein No-op fürs Lernen — der Core filtert
 > ihn heraus.
+
+### `save_brain` / `reset_brain`
+
+`save_brain` schreibt sofort einen Snapshot (sonst passiert das periodisch,
+beim Entladen und beim HA-Shutdown). `reset_brain` löscht das gelernte Gehirn
+**und** die MetaPlasticity-Meta-Daten und lädt die Integration kalt neu —
+nützlich, wenn das Modell „verdorben" ist und neu anlernen soll.
 
 ## Installation
 
