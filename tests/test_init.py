@@ -21,6 +21,7 @@ async def _setup(hass: HomeAssistant, entities: list[str] | None = None):
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=DOMAIN,
+        title="Test",
         data={CONF_NAME: "Test"},
         options={CONF_ENTITIES: entities or []},
     )
