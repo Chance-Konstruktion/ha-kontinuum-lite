@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "KONTINUUM Lite",
+        "description": "Minimales, headless neuroinspiriertes Lern-Substrat.",
+        "data": {
+          "name": "Name",
+          "entities": "Entitäten, von denen gelernt werden soll"
+        },
+        "data_description": {
+          "entities": "Diese Entitäten werden bei jedem Zustandswechsel in die Engine gefüttert. Leer lassen, um nur über den Dienst „Evaluate“ Beobachtungen einzuspeisen."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "KONTINUUM Lite ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "KONTINUUM Lite",
+        "description": "Wähle, welche Entitäten das Lern-Substrat beobachtet.",
+        "data": {
+          "entities": "Entitäten, von denen gelernt werden soll"
+        },
+        "data_description": {
+          "entities": "Eine Änderung lädt die Integration neu. Neu hinzugefügte Entitäten tragen sofort bei; entfernte werden nicht mehr beobachtet."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "surprise": {
+        "name": "Überraschung"
+      },
+      "learning_state": {
+        "name": "Lernzustand",
+        "state": {
+          "cold_start": "Kaltstart",
+          "learning": "Lernt",
+          "stable": "Stabil"
+        }
+      }
+    },
+    "binary_sensor": {
+      "anomaly": {
+        "name": "Anomalie"
+      }
+    }
+  },
+  "services": {
+    "evaluate": {
+      "name": "Auswerten",
+      "description": "Führt einen Engine-Tick aus; feuert kontinuum_lite_anomaly, wenn die Schwelle überschritten wird.",
+      "fields": {
+        "payload": {
+          "name": "Payload",
+          "description": "Optionale Beobachtungs-Payload, die an die Engine weitergereicht wird."
+        }
+      }
+    },
+    "save_brain": {
+      "name": "Gehirn speichern",
+      "description": "Erzwingt eine sofortige Momentaufnahme des gelernten Gehirns auf die Festplatte."
+    },
+    "reset_brain": {
+      "name": "Gehirn zurücksetzen",
+      "description": "Löscht alles Gelernte und startet kalt neu. Kann nicht rückgängig gemacht werden."
+    }
+  }
+}

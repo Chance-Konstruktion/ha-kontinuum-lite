@@ -5,6 +5,31 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 (2026-06-20)
+
+### Added
+- **`save_brain` service** — force an immediate brain snapshot to disk (handy
+  before a planned restart).
+- **`reset_brain` service** — erase all learning (the full brain *and* the
+  metaplasticity meta-state) and reload cold. The reset path skips the usual
+  save-on-unload and deletes both persisted files (the metaplasticity path is
+  read from the core, so a rename there won't leave stale state behind), then
+  reloads so the engine comes back at `cold_start`.
+- **Shutdown durability** — a `homeassistant_stop` listener flushes the brain
+  (and metaplasticity) on HA shutdown, in addition to the existing
+  save-on-unload, so a clean stop never loses learning.
+- **German translations** (`translations/de.json`) plus the canonical
+  `translations/en.json`, covering the config/options flow, entities and all
+  three services.
+- Tests for the new services (save writes the file; reset clears it and comes
+  back cold).
+
+### Changed
+- Service handlers now resolve the active engine from `hass.data` on each call
+  instead of closing over it at setup time. This fixes a latent bug where,
+  after a reload (e.g. an options change), `evaluate` would have fed the stale,
+  discarded engine. Integration version bumped to `0.4.0`.
+
 ## 0.3.0 (2026-06-20)
 
 ### Added

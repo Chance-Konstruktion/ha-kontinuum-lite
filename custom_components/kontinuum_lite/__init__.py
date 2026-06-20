@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -25,6 +25,8 @@ from .const import (
     EVENT_ANOMALY,
     SAVE_INTERVAL_SECONDS,
     SERVICE_EVALUATE,
+    SERVICE_RESET_BRAIN,
+    SERVICE_SAVE_BRAIN,
     SIGNAL_UPDATE,
     STORAGE_DIR,
 )
@@ -67,6 +69,28 @@ def _load_brain(engine: LiteEngine, brain_path: str) -> bool:
     with gzip.open(brain_path, "rt", encoding="utf-8") as fh:
         data = json.load(fh)
     return engine.restore(data)
+
+
+def _delete_file(path: str) -> None:
+    """Remove a persisted file if it exists (blocking; run in executor)."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def _reset_files(engine: LiteEngine, brain_path: str) -> None:
+    """Erase all persisted learning so a reload comes back cold.
+
+    Deletes the brain snapshot and the core's metaplasticity file (its path is
+    read from the core itself, so a future rename there doesn't silently leave
+    stale state behind).
+    """
+    _delete_file(brain_path)
+    mp = getattr(engine.core, "metaplasticity", None)
+    mp_path = getattr(mp, "_path", None)
+    if mp_path:
+        _delete_file(mp_path)
 
 
 def _selected_entities(entry: ConfigEntry) -> list[str]:
@@ -267,19 +291,78 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload when the user changes the observed-entity list via options.
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
+    # Belt-and-suspenders durability: flush on HA shutdown too. The unload
+    # path normally runs on stop and saves, but this guarantees a final
+    # snapshot even if it doesn't. Removed automatically on unload.
+    async def _on_ha_stop(_event: Event) -> None:
+        await hass.async_add_executor_job(_save_brain, engine, brain_path)
+        try:
+            await hass.async_add_executor_job(engine.core.metaplasticity.save)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("MetaPlasticity save on stop failed")
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_ha_stop)
+    )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _async_register_services(hass)
+    return True
+
+
+@callback
+def _resolve_engine(hass: HomeAssistant) -> LiteEngine | None:
+    """Return the active engine (single-instance integration).
+
+    Looked up fresh from ``hass.data`` so service handlers never hold a stale
+    reference to an engine discarded by a reload.
+    """
+    for key, value in hass.data.get(DOMAIN, {}).items():
+        if not key.startswith("_") and isinstance(value, LiteEngine):
+            return value
+    return None
+
+
+@callback
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register the domain services once (idempotent across entries)."""
+    if hass.services.has_service(DOMAIN, SERVICE_EVALUATE):
+        return
 
     async def _handle_evaluate(call: ServiceCall) -> None:
         """Run one engine tick from a manual payload and push updates."""
+        engine = _resolve_engine(hass)
+        if engine is None:
+            return
         payload_raw: Any = call.data.get("payload")
         payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
         _ingest(hass, engine, payload)
 
-    # Register service once (first entry wins; unregister on final unload).
-    if not hass.services.has_service(DOMAIN, SERVICE_EVALUATE):
-        hass.services.async_register(DOMAIN, SERVICE_EVALUATE, _handle_evaluate)
+    async def _handle_save_brain(call: ServiceCall) -> None:
+        """Force an immediate brain snapshot to disk."""
+        engine = _resolve_engine(hass)
+        if engine is None:
+            return
+        brain_path = _brain_path(hass.config.path(STORAGE_DIR))
+        await hass.async_add_executor_job(_save_brain, engine, brain_path)
+        _LOGGER.info("KONTINUUM Lite: brain saved on request")
 
-    return True
+    async def _handle_reset_brain(call: ServiceCall) -> None:
+        """Erase all learning and reload cold. Cannot be undone."""
+        data = hass.data.setdefault(DOMAIN, {})
+        entry_ids = [
+            key
+            for key, value in data.items()
+            if not key.startswith("_") and isinstance(value, LiteEngine)
+        ]
+        reset = data.setdefault("_reset", set())
+        for entry_id in entry_ids:
+            reset.add(entry_id)
+            await hass.config_entries.async_reload(entry_id)
+
+    hass.services.async_register(DOMAIN, SERVICE_EVALUATE, _handle_evaluate)
+    hass.services.async_register(DOMAIN, SERVICE_SAVE_BRAIN, _handle_save_brain)
+    hass.services.async_register(DOMAIN, SERVICE_RESET_BRAIN, _handle_reset_brain)
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -292,13 +375,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         bucket = hass.data.get(DOMAIN, {})
+        reset_set: set[str] = bucket.get("_reset", set())
+        resetting = entry.entry_id in reset_set
+        reset_set.discard(entry.entry_id)
         engine: LiteEngine | None = bucket.pop(entry.entry_id, None)
         scheduler: HAScheduler | None = bucket.get("_schedulers", {}).pop(
             entry.entry_id, None
         )
-        if engine is not None:
+        brain_path = _brain_path(hass.config.path(STORAGE_DIR))
+        if engine is not None and resetting:
+            # reset_brain requested: discard learning instead of persisting it,
+            # so the imminent reload comes back cold.
             try:
-                brain_path = _brain_path(hass.config.path(STORAGE_DIR))
+                await hass.async_add_executor_job(_reset_files, engine, brain_path)
+                _LOGGER.info("KONTINUUM Lite: brain reset — learning cleared")
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Brain reset failed")
+        elif engine is not None:
+            try:
                 await hass.async_add_executor_job(_save_brain, engine, brain_path)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Brain save failed during unload")
@@ -308,9 +402,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.exception("MetaPlasticity save failed during unload")
         if scheduler is not None:
             scheduler.cancel_all()
-        # Drop service + container if no entries remain (ignore bookkeeping keys).
+        # Drop services + container if no entries remain (ignore bookkeeping keys).
         remaining = {k for k in bucket if not k.startswith("_")}
         if not remaining:
-            hass.services.async_remove(DOMAIN, SERVICE_EVALUATE)
+            for service in (
+                SERVICE_EVALUATE,
+                SERVICE_SAVE_BRAIN,
+                SERVICE_RESET_BRAIN,
+            ):
+                hass.services.async_remove(DOMAIN, service)
             hass.data.pop(DOMAIN, None)
     return unload_ok

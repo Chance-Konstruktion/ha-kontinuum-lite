@@ -1,6 +1,9 @@
 """Setup / teardown tests (require Home Assistant + kontinuum-core)."""
 from __future__ import annotations
 
+import os
+import shutil
+
 import pytest
 
 pytest.importorskip("homeassistant")
@@ -10,11 +13,33 @@ from homeassistant.core import HomeAssistant  # noqa: E402
 from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
 
 from custom_components.kontinuum_lite.const import (  # noqa: E402
+    BRAIN_FILE,
     CONF_ENTITIES,
     CONF_NAME,
     DOMAIN,
     SERVICE_EVALUATE,
+    SERVICE_RESET_BRAIN,
+    SERVICE_SAVE_BRAIN,
+    STORAGE_DIR,
 )
+
+
+def _brain_file(hass: HomeAssistant) -> str:
+    return os.path.join(hass.config.path(STORAGE_DIR), BRAIN_FILE)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_storage(hass: HomeAssistant):
+    """Wipe the persistent storage dir around each test.
+
+    pytest-homeassistant-custom-component shares one on-disk ``testing_config``
+    directory across the whole session, so a brain saved by one test would leak
+    into the next. Clear it before and after each test for true isolation.
+    """
+    path = hass.config.path(STORAGE_DIR)
+    shutil.rmtree(path, ignore_errors=True)
+    yield
+    shutil.rmtree(path, ignore_errors=True)
 
 
 async def _setup(hass: HomeAssistant, entities: list[str] | None = None):
@@ -31,20 +56,49 @@ async def _setup(hass: HomeAssistant, entities: list[str] | None = None):
     return entry
 
 
-async def test_setup_creates_entities_and_service(hass: HomeAssistant) -> None:
+async def test_setup_creates_entities_and_services(hass: HomeAssistant) -> None:
     await _setup(hass)
     assert hass.states.get("sensor.test_surprise") is not None
     assert hass.states.get("sensor.test_learning_state") is not None
     assert hass.states.get("binary_sensor.test_anomaly") is not None
-    assert hass.services.has_service(DOMAIN, SERVICE_EVALUATE)
+    for service in (SERVICE_EVALUATE, SERVICE_SAVE_BRAIN, SERVICE_RESET_BRAIN):
+        assert hass.services.has_service(DOMAIN, service)
 
 
-async def test_unload_removes_service(hass: HomeAssistant) -> None:
+async def test_unload_removes_services(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    assert not hass.services.has_service(DOMAIN, SERVICE_EVALUATE)
+    for service in (SERVICE_EVALUATE, SERVICE_SAVE_BRAIN, SERVICE_RESET_BRAIN):
+        assert not hass.services.has_service(DOMAIN, service)
     assert DOMAIN not in hass.data
+
+
+async def test_save_brain_service_writes_file(hass: HomeAssistant) -> None:
+    await _setup(hass)
+    assert not os.path.exists(_brain_file(hass))
+    await hass.services.async_call(DOMAIN, SERVICE_SAVE_BRAIN, {}, blocking=True)
+    assert os.path.exists(_brain_file(hass))
+
+
+async def test_reset_brain_service_clears_learning(hass: HomeAssistant) -> None:
+    entry = await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+
+    # Accumulate a little learning, then snapshot it to disk.
+    hass.states.async_set("binary_sensor.motion_kitchen", "on")
+    await hass.async_block_till_done()
+    await hass.services.async_call(DOMAIN, SERVICE_SAVE_BRAIN, {}, blocking=True)
+    assert os.path.exists(_brain_file(hass))
+    original_engine = hass.data[DOMAIN][entry.entry_id]
+
+    await hass.services.async_call(DOMAIN, SERVICE_RESET_BRAIN, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    # The snapshot is deleted and the entry reloaded a fresh, cold engine.
+    # (It may immediately re-observe the entity's current state, so the proof
+    # of a reset is the erased file + a new engine instance, not a zero count.)
+    assert not os.path.exists(_brain_file(hass))
+    assert hass.data[DOMAIN][entry.entry_id] is not original_engine
 
 
 async def test_observed_entity_feeds_engine(hass: HomeAssistant) -> None:

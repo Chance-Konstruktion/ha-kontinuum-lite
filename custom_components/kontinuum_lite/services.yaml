@@ -15,3 +15,15 @@ evaluate:
       example: '{"entity_id": "binary_sensor.flur_bewegung", "new_state": "on", "old_state": "off"}'
       selector:
         object:
+
+save_brain:
+  name: Save brain
+  description: >-
+    Force an immediate snapshot of the learned brain to disk. Useful before a
+    planned restart; otherwise the brain is saved periodically and on shutdown.
+
+reset_brain:
+  name: Reset brain
+  description: >-
+    Erase all learning (hippocampus, predictive, cerebellum, basal ganglia and
+    the metaplasticity meta-state) and reload cold. This cannot be undone.
