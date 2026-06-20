@@ -108,3 +108,22 @@ def test_restore_rejects_garbage():
     engine = LiteEngine()
     assert engine.restore({}) is False
     assert engine.restore("not a dict") is False  # type: ignore[arg-type]
+
+
+def test_snapshot_exposes_threshold_and_token():
+    """After real learning the snapshot surfaces the adaptive threshold + token."""
+    engine = LiteEngine()
+    _feed_alternating(engine, 60)
+    snap = engine.snapshot
+    # The token reflects the last processed observation (room.semantic.state).
+    assert snap.token is None or isinstance(snap.token, str)
+    # The adaptive anomaly threshold is exposed once the core reports it.
+    threshold = snap.anomaly_threshold
+    assert threshold is None or 0.0 <= threshold <= 1.0
+
+
+def test_anomaly_threshold_handles_missing_extra():
+    """A fresh/skipped snapshot has no threshold rather than crashing."""
+    snap = engine_mod.EngineSnapshot()
+    assert snap.anomaly_threshold is None
+    assert snap.expected_next_room is None

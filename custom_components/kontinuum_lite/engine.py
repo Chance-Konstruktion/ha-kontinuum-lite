@@ -26,7 +26,19 @@ class EngineSnapshot:
     anomaly: bool = False
     learning_state: str = STATE_COLD_START
     tick_count: int = 0
+    token: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def anomaly_threshold(self) -> float | None:
+        """The core's current adaptive anomaly threshold, if exposed."""
+        value = self.extra.get("anomaly_threshold")
+        return float(value) if isinstance(value, (int, float)) else None
+
+    @property
+    def expected_next_room(self) -> str | None:
+        """The room the engine currently predicts will activate next."""
+        return self.extra.get("expected_next_room")
 
 
 class LiteEngine:
@@ -67,6 +79,7 @@ class LiteEngine:
             anomaly=bool(core_snap.anomaly),
             learning_state=core_snap.learning_state,
             tick_count=core_snap.tick_count,
+            token=getattr(core_snap, "token", None),
             extra=core_snap.extra or {},
         )
         return self._snapshot

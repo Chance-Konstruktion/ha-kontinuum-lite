@@ -42,6 +42,9 @@ async def async_get_config_entry_diagnostics(
             "learning_state": snap.learning_state,
             "surprise": snap.surprise,
             "anomaly": snap.anomaly,
+            "anomaly_threshold": snap.anomaly_threshold,
+            "token": snap.token,
+            "expected_next_room": snap.expected_next_room,
         }
     else:
         data["engine"] = None

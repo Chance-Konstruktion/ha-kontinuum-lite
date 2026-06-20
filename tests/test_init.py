@@ -10,6 +10,7 @@ pytest.importorskip("homeassistant")
 pytest.importorskip("kontinuum_core")
 
 from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
 
 from custom_components.kontinuum_lite.const import (  # noqa: E402
@@ -114,3 +115,34 @@ async def test_observed_entity_feeds_engine(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     assert engine.tick_count > before
+
+
+async def test_no_entities_raises_repair_issue(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    registry = ir.async_get(hass)
+    assert (
+        registry.async_get_issue(DOMAIN, f"no_entities_{entry.entry_id}") is not None
+    )
+
+
+async def test_selecting_entities_clears_repair_issue(hass: HomeAssistant) -> None:
+    entry = await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, f"no_entities_{entry.entry_id}") is None
+
+
+async def test_entities_expose_observability_attributes(hass: HomeAssistant) -> None:
+    await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+    hass.states.async_set("binary_sensor.motion_kitchen", "on")
+    await hass.async_block_till_done()
+
+    anomaly = hass.states.get("binary_sensor.test_anomaly")
+    assert "threshold" in anomaly.attributes
+    assert "surprise" in anomaly.attributes
+
+    surprise = hass.states.get("sensor.test_surprise")
+    assert "anomaly_threshold" in surprise.attributes
+    assert "token" in surprise.attributes
+
+    learning = hass.states.get("sensor.test_learning_state")
+    assert "total_events" in learning.attributes
