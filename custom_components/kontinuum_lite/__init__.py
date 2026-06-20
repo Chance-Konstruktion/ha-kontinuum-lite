@@ -14,6 +14,7 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
+    issue_registry as ir,
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
@@ -98,6 +99,35 @@ def _selected_entities(entry: ConfigEntry) -> list[str]:
     if CONF_ENTITIES in entry.options:
         return list(entry.options.get(CONF_ENTITIES) or [])
     return list(entry.data.get(CONF_ENTITIES, []) or [])
+
+
+def _no_entities_issue_id(entry: ConfigEntry) -> str:
+    return f"no_entities_{entry.entry_id}"
+
+
+@callback
+def _async_update_no_entities_issue(
+    hass: HomeAssistant, entry: ConfigEntry, entities: list[str]
+) -> None:
+    """Raise a repair when nothing is selected to learn from.
+
+    A freshly installed instance with no observed entities silently sits at
+    cold_start forever — the single most common "it doesn't do anything"
+    misconfiguration. Surface it as a dismissible repair that clears itself
+    once entities are chosen.
+    """
+    issue_id = _no_entities_issue_id(entry)
+    if entities:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="no_entities",
+    )
 
 
 @callback
@@ -249,6 +279,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # state changes so the engine learns on its own. Without this the engine
     # only ever sees manual `evaluate` calls and stays at cold_start forever.
     entities = _selected_entities(entry)
+    _async_update_no_entities_issue(hass, entry, entities)
     if entities:
         _register_entities(hass, engine, entities)
         # Seed from current state so learning starts now, not on the next change.
@@ -374,6 +405,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        ir.async_delete_issue(hass, DOMAIN, _no_entities_issue_id(entry))
         bucket = hass.data.get(DOMAIN, {})
         reset_set: set[str] = bucket.get("_reset", set())
         resetting = entry.entry_id in reset_set

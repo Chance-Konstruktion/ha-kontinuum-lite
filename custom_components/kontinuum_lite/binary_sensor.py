@@ -56,3 +56,12 @@ class AnomalyBinarySensor(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return bool(self._engine.snapshot.anomaly)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        snap = self._engine.snapshot
+        return {
+            "surprise": snap.surprise,
+            "threshold": snap.anomaly_threshold,
+            "expected_next_room": snap.expected_next_room,
+        }

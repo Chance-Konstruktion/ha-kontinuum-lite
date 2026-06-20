@@ -20,11 +20,20 @@ Ideal für:
 
 ## Entitäten
 
-| Entität | Typ | Werte |
-|---|---|---|
-| `sensor.kontinuum_lite_surprise` | numerisch | `0.0` … `1.0` |
-| `sensor.kontinuum_lite_learning_state` | kategorisch | `cold_start` / `learning` / `stable` |
-| `binary_sensor.kontinuum_lite_anomaly` | on/off | device_class `problem` |
+| Entität | Typ | Werte | Attribute |
+|---|---|---|---|
+| `sensor.kontinuum_lite_surprise` | numerisch | `0.0` … `1.0` | `anomaly_threshold`, `token` |
+| `sensor.kontinuum_lite_learning_state` | kategorisch | `cold_start` / `learning` / `stable` | `tick`, `total_events` |
+| `binary_sensor.kontinuum_lite_anomaly` | on/off | device_class `problem` | `surprise`, `threshold`, `expected_next_room` |
+
+> Die **adaptive Anomalie-Schwelle** (`threshold` / `anomaly_threshold`) macht
+> sichtbar, ab welchem Surprise-Wert geflaggt wird — praktisch fürs Tuning von
+> Automatisierungen. `token` ist das aktuelle `raum.semantik.zustand`-Symbol,
+> über das die Engine gerade „nachdenkt".
+
+> **Hinweis:** Ist keine Entity ausgewählt, lernt die Integration nichts und
+> meldet das als **Reparatur** (Einstellungen → Reparaturen); sie verschwindet,
+> sobald du in den Optionen Entities auswählst.
 
 ## Was wird gelernt?
 

@@ -5,6 +5,29 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 (2026-06-20)
+
+### Added
+- **Observability attributes.** The engine's decision is now legible from the
+  entities themselves:
+  - `binary_sensor.*_anomaly` exposes `surprise`, `threshold` (the *adaptive*
+    anomaly threshold) and `expected_next_room` — so "why did/didn't it flag?"
+    is answerable at a glance.
+  - `sensor.*_surprise` exposes `anomaly_threshold` and `token` (the current
+    `room.semantic.state` the engine is reasoning over).
+  - `sensor.*_learning_state` gains `total_events` (the post-filter event count
+    the cold_start → learning → stable transitions key off).
+- **Repair issue for the most common misconfiguration.** An instance with no
+  observed entities silently sits at `cold_start` forever; it now raises a
+  dismissible repair (Settings → Repairs) that points to the options flow and
+  clears itself once entities are selected.
+- Diagnostics now include `anomaly_threshold`, `token` and `expected_next_room`.
+- `EngineSnapshot` gains a `token` field plus `anomaly_threshold` /
+  `expected_next_room` convenience properties (read from the core `extra`,
+  `None` when the core hasn't reported them yet).
+- Tests for the new attributes and the repair issue (raised with no entities,
+  cleared when entities are chosen). Integration version bumped to `0.5.0`.
+
 ## 0.4.0 (2026-06-20)
 
 ### Added

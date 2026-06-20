@@ -70,5 +70,11 @@
       "name": "Reset brain",
       "description": "Erase all learning and reload cold. This cannot be undone."
     }
+  },
+  "issues": {
+    "no_entities": {
+      "title": "KONTINUUM Lite has no entities to learn from",
+      "description": "No entities are selected, so the learning substrate stays at cold start and never learns. Open the integration's options (Settings → Devices & services → KONTINUUM Lite → Configure) and choose the entities it should observe. You can ignore this if you intentionally feed observations only via the evaluate service."
+    }
   }
 }

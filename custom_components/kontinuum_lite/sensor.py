@@ -74,6 +74,16 @@ class SurpriseSensor(_LiteEntityBase):
     def native_value(self) -> float:
         return float(self._engine.snapshot.surprise)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        snap = self._engine.snapshot
+        return {
+            # The adaptive threshold the anomaly decision is compared against —
+            # exposing it makes "why did/didn't it flag" answerable.
+            "anomaly_threshold": snap.anomaly_threshold,
+            "token": snap.token,
+        }
+
 
 class LearningStateSensor(_LiteEntityBase):
     """Categorical learning state (cold_start / learning / stable)."""
@@ -90,4 +100,9 @@ class LearningStateSensor(_LiteEntityBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, int]:
-        return {"tick": self._engine.snapshot.tick_count}
+        return {
+            "tick": self._engine.snapshot.tick_count,
+            # Events the hippocampus actually learned from (post-filter); the
+            # cold_start → learning → stable transitions key off this.
+            "total_events": self._engine.total_events,
+        }

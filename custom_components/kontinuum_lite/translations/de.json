@@ -70,5 +70,11 @@
       "name": "Gehirn zurücksetzen",
       "description": "Löscht alles Gelernte und startet kalt neu. Kann nicht rückgängig gemacht werden."
     }
+  },
+  "issues": {
+    "no_entities": {
+      "title": "KONTINUUM Lite hat keine Entitäten zum Lernen",
+      "description": "Es sind keine Entitäten ausgewählt — das Lern-Substrat bleibt im Kaltstart und lernt nichts. Öffne die Optionen der Integration (Einstellungen → Geräte & Dienste → KONTINUUM Lite → Konfigurieren) und wähle die zu beobachtenden Entitäten. Du kannst dies ignorieren, wenn du Beobachtungen bewusst nur über den Dienst „Evaluate“ einspeist."
+    }
   }
 }
