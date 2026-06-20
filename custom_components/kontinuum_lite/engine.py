@@ -106,10 +106,15 @@ class LiteEngine:
         if not callable(from_dict) or not isinstance(data, dict) or not data:
             return False
         from_dict(data)
-        # Reflect the restored tick count so the learning-state sensor shows
-        # continuity immediately; surprise/anomaly refresh on the next tick.
+        # Reflect the restored tick count *and* learning state so both sensors
+        # show continuity immediately. Deriving the learning state from the
+        # restored hippocampus stats avoids the old bug where the sensor read
+        # ``cold_start`` after restoring a brain with thousands of events, until
+        # the next tick. surprise/anomaly still refresh on the next observation.
+        derive = getattr(self._core, "_learning_state", None)
+        learning_state = derive() if callable(derive) else STATE_COLD_START
         self._snapshot = EngineSnapshot(
-            learning_state=self._snapshot.learning_state,
+            learning_state=learning_state,
             tick_count=int(getattr(self._core, "tick_count", 0)),
         )
         return True
@@ -119,6 +124,21 @@ class LiteEngine:
     @property
     def snapshot(self) -> EngineSnapshot:
         return self._snapshot
+
+    @property
+    def tick_count(self) -> int:
+        """Total ticks the core has processed (survives restarts via restore).
+
+        Used as a cheap dirty marker for persistence: if it hasn't advanced
+        since the last save, there is nothing new to write.
+        """
+        return int(getattr(self._core, "tick_count", 0))
+
+    @property
+    def total_events(self) -> int:
+        """Number of events the hippocampus actually learned from (post-filter)."""
+        hippo = getattr(self._core, "hippocampus", None)
+        return int(getattr(hippo, "total_events", 0))
 
     @property
     def core(self) -> KontinuumEngine:

@@ -7,6 +7,7 @@ DOMAIN: Final = "kontinuum_lite"
 
 # Config-flow keys
 CONF_NAME: Final = "name"
+CONF_ENTITIES: Final = "entities"
 DEFAULT_NAME: Final = "KONTINUUM Lite"
 
 # Services & events

@@ -1,4 +1,4 @@
-"""KONTINUUM Lite integration (Phase 0 skeleton)."""
+"""KONTINUUM Lite integration."""
 from __future__ import annotations
 
 import gzip
@@ -9,11 +9,18 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
     BRAIN_FILE,
+    CONF_ENTITIES,
     DOMAIN,
     EVENT_ANOMALY,
     SAVE_INTERVAL_SECONDS,
@@ -62,6 +69,120 @@ def _load_brain(engine: LiteEngine, brain_path: str) -> bool:
     return engine.restore(data)
 
 
+def _selected_entities(entry: ConfigEntry) -> list[str]:
+    """Entities the user picked to feed the engine (options override data)."""
+    if CONF_ENTITIES in entry.options:
+        return list(entry.options.get(CONF_ENTITIES) or [])
+    return list(entry.data.get(CONF_ENTITIES, []) or [])
+
+
+@callback
+def _register_entities(
+    hass: HomeAssistant, engine: LiteEngine, entity_ids: list[str]
+) -> None:
+    """Tell the core about each entity with its area + metadata.
+
+    The core's thalamus drops any observation for an entity it doesn't know
+    or can't place in a room, so this registration is what makes auto-learning
+    actually work. Metadata is resolved from the entity/device/area registries
+    and falls back to live state attributes for registry-less entities.
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    area_reg = ar.async_get(hass)
+
+    for entity_id in entity_ids:
+        meta: dict[str, Any] = {"domain": entity_id.split(".")[0]}
+        area_id: str | None = None
+
+        entry = ent_reg.async_get(entity_id)
+        if entry is not None:
+            area_id = entry.area_id
+            if area_id is None and entry.device_id:
+                device = dev_reg.async_get(entry.device_id)
+                if device is not None:
+                    area_id = device.area_id
+            meta["device_class"] = (
+                entry.device_class or entry.original_device_class or ""
+            )
+            meta["unit"] = entry.unit_of_measurement or ""
+            meta["friendly_name"] = entry.name or entry.original_name or ""
+
+        state = hass.states.get(entity_id)
+        if state is not None:
+            attrs = state.attributes
+            meta.setdefault("device_class", attrs.get("device_class") or "")
+            if not meta.get("unit"):
+                meta["unit"] = attrs.get("unit_of_measurement") or ""
+            if not meta.get("friendly_name"):
+                meta["friendly_name"] = attrs.get("friendly_name") or ""
+
+        if area_id:
+            area = area_reg.async_get_area(area_id)
+            if area is not None:
+                meta["ha_area"] = area.name
+
+        if not meta.get("ha_area"):
+            _LOGGER.debug(
+                "KONTINUUM Lite: %s has no resolvable area; the core may skip "
+                "it unless it can infer a room",
+                entity_id,
+            )
+        engine.register_entity(entity_id, **meta)
+
+
+@callback
+def _ingest(
+    hass: HomeAssistant, engine: LiteEngine, observation: dict[str, Any]
+) -> None:
+    """Feed one observation to the engine and surface the result.
+
+    Shared by the state-change listener and the ``evaluate`` service so both
+    paths fire the anomaly event on the same rising edge.
+    """
+    previously_anomalous = engine.snapshot.anomaly
+    snap = engine.observe(observation)
+
+    async_dispatcher_send(hass, SIGNAL_UPDATE)
+
+    # Fire on the anomaly edge only. The threshold itself is the core's
+    # adaptive decision (baseline + 2σ of recent surprise), not a constant.
+    if snap.anomaly and not previously_anomalous:
+        hass.bus.async_fire(
+            EVENT_ANOMALY,
+            {
+                "surprise": snap.surprise,
+                "learning_state": snap.learning_state,
+                "tick": snap.tick_count,
+                "entity_id": observation.get("entity_id"),
+            },
+        )
+
+
+@callback
+def _make_state_listener(hass: HomeAssistant, engine: LiteEngine):
+    """Build the state-change callback that turns HA events into observations."""
+
+    @callback
+    def _on_state_change(event: Event) -> None:
+        new_state = event.data.get("new_state")
+        if new_state is None:  # entity removed
+            return
+        old_state = event.data.get("old_state")
+        _ingest(
+            hass,
+            engine,
+            {
+                "entity_id": event.data["entity_id"],
+                "new_state": new_state.state,
+                "old_state": old_state.state if old_state else None,
+                "timestamp": new_state.last_updated,
+            },
+        )
+
+    return _on_state_change
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up KONTINUUM Lite from a config entry."""
     scheduler = HAScheduler(hass)
@@ -82,7 +203,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Restore the full learned brain so learning survives restarts. Without
     # this the hippocampus/predictive/cerebellum/basal-ganglia state was
-    # rebuilt from zero on every reload. No-op on kontinuum-core < 0.1.2.
+    # rebuilt from zero on every reload. No-op on kontinuum-core without
+    # to_dict/from_dict.
     brain_path = _brain_path(storage_path)
     try:
         loaded = await hass.async_add_executor_job(_load_brain, engine, brain_path)
@@ -94,49 +216,75 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         elif not engine.supports_persistence:
             _LOGGER.info(
                 "KONTINUUM Lite: installed kontinuum-core has no brain "
-                "persistence (needs >= 0.1.2); only metaplasticity is kept"
+                "persistence; only metaplasticity is kept"
             )
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Brain load failed; starting cold")
 
+    # Auto-ingestion: register the chosen entities and subscribe to their
+    # state changes so the engine learns on its own. Without this the engine
+    # only ever sees manual `evaluate` calls and stays at cold_start forever.
+    entities = _selected_entities(entry)
+    if entities:
+        _register_entities(hass, engine, entities)
+        # Seed from current state so learning starts now, not on the next change.
+        for entity_id in entities:
+            state = hass.states.get(entity_id)
+            if state is not None:
+                _ingest(
+                    hass,
+                    engine,
+                    {
+                        "entity_id": entity_id,
+                        "new_state": state.state,
+                        "old_state": None,
+                        "timestamp": state.last_updated,
+                    },
+                )
+        entry.async_on_unload(
+            async_track_state_change_event(
+                hass, entities, _make_state_listener(hass, engine)
+            )
+        )
+        _LOGGER.debug("KONTINUUM Lite: observing %d entities", len(entities))
+
     # Snapshot the brain periodically so an unclean shutdown (power loss,
-    # OS kill) loses at most SAVE_INTERVAL_SECONDS of learning. The unload
-    # handler does a final save. cancel_all() (on unload) stops this too.
-    scheduler.schedule_interval(
-        lambda: _save_brain(engine, brain_path), SAVE_INTERVAL_SECONDS
-    )
+    # OS kill) loses at most SAVE_INTERVAL_SECONDS of learning. Skip the
+    # write when no new ticks happened since the last save — headless
+    # instances often idle, and HA frequently runs on flash/SD where
+    # needless writes cost endurance. The unload handler does a final save.
+    save_marker = {"tick": -1}
+
+    def _maybe_save_brain() -> None:
+        tick = engine.tick_count
+        if tick == save_marker["tick"]:
+            return
+        _save_brain(engine, brain_path)
+        save_marker["tick"] = tick
+
+    scheduler.schedule_interval(_maybe_save_brain, SAVE_INTERVAL_SECONDS)
+
+    # Reload when the user changes the observed-entity list via options.
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     async def _handle_evaluate(call: ServiceCall) -> None:
-        """Run one engine tick and push updates to entities."""
+        """Run one engine tick from a manual payload and push updates."""
         payload_raw: Any = call.data.get("payload")
         payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
-        previously_anomalous = engine.snapshot.anomaly
-        snap = engine.evaluate(payload)
-
-        # Notify entities.
-        async_dispatcher_send(hass, SIGNAL_UPDATE)
-
-        # Fire event on the anomaly edge. The threshold itself lives in
-        # the core engine (adaptive, baseline + 2σ) — the integration
-        # only reacts to the core's decision.
-        if snap.anomaly and not previously_anomalous:
-            hass.bus.async_fire(
-                EVENT_ANOMALY,
-                {
-                    "surprise": snap.surprise,
-                    "learning_state": snap.learning_state,
-                    "tick": snap.tick_count,
-                    "payload": payload,
-                },
-            )
+        _ingest(hass, engine, payload)
 
     # Register service once (first entry wins; unregister on final unload).
     if not hass.services.has_service(DOMAIN, SERVICE_EVALUATE):
         hass.services.async_register(DOMAIN, SERVICE_EVALUATE, _handle_evaluate)
 
     return True
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the entry so a changed entity selection takes effect."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

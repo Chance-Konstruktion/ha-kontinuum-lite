@@ -6,8 +6,12 @@ evaluate:
   fields:
     payload:
       name: Payload
-      description: Optional observation payload forwarded to the engine.
+      description: >-
+        Observation forwarded to the engine. For learning it needs at least
+        entity_id and new_state for an entity the engine already tracks;
+        normal operation feeds observations automatically from the configured
+        entities, so this service is mainly for testing/manual feeding.
       required: false
-      example: '{"source": "manual"}'
+      example: '{"entity_id": "binary_sensor.flur_bewegung", "new_state": "on", "old_state": "off"}'
       selector:
         object:
