@@ -5,6 +5,52 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 (2026-06-20)
+
+### Added
+- **Automatic data ingestion.** The integration now actually learns on its
+  own. You pick the entities to observe (in the config flow *and* a new
+  **options flow**); each one is registered with the core (area + device_class
+  + unit + friendly_name resolved from the entity/device/area registries) and
+  its state changes are streamed into the engine via
+  `async_track_state_change_event`. Current states are seeded at setup so
+  learning starts immediately, not on the next change. Previously the only
+  way in was a manual `evaluate` service call — and because the core drops
+  observations for unregistered/area-less entities, Lite in practice never
+  learned anything out of the box.
+- **Options flow** to change the observed-entity list after setup; changing
+  it reloads the entry so additions start contributing and removals stop.
+- **Diagnostics platform** (`diagnostics.py`): dumps core version, whether the
+  installed core supports brain persistence, tick/event counts and the current
+  learning state — surfacing the previously invisible "old core silently
+  no-ops persistence" case.
+- **Test suite + CI.** HA-free contract tests pin the core data flow
+  (register-with-area → learn; unregistered/area-less → skipped; persistence
+  roundtrip) and `LiteEngine` projection/restore; HA-based tests cover the
+  config/options flow and setup/teardown. New `Tests` workflow runs them on
+  push/PR. Adds `requirements_test.txt` and `pyproject.toml` (pytest config).
+
+### Changed
+- **`manifest.json` now pins `kontinuum-core>=0.6.0,<0.7`** (was `>=0.1.2`
+  with no upper bound — which contradicted the README's "latest 0.x" claim and
+  would have happily installed a breaking 1.x). The ingestion path is verified
+  against the 0.6.x API. Integration version bumped to `0.3.0`.
+- Added `"loggers": ["kontinuum_core"]` to the manifest.
+- The anomaly event now carries `entity_id` (the trigger) instead of echoing
+  the raw service `payload`.
+- The `evaluate` service and the new state listener share one ingestion helper,
+  so both fire `kontinuum_lite_anomaly` on the same rising edge.
+
+### Fixed
+- **`learning_state` after a restart no longer shows `cold_start`** for a
+  trained brain. `LiteEngine.restore()` now derives the state from the restored
+  hippocampus stats instead of copying the stale default snapshot, so the
+  sensor reflects continuity immediately rather than after the next tick.
+- **Brain snapshots are skipped when nothing changed.** The periodic save now
+  checks the tick count and writes only when the engine actually advanced —
+  headless instances often idle, and HA frequently runs on flash/SD where
+  needless writes cost endurance.
+
 ## 0.2.1 (2026-06-13)
 
 ### Added

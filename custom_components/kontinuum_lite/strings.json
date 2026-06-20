@@ -5,12 +5,30 @@
         "title": "KONTINUUM Lite",
         "description": "Minimal, headless neuroinspired learning substrate.",
         "data": {
-          "name": "Name"
+          "name": "Name",
+          "entities": "Entities to learn from"
+        },
+        "data_description": {
+          "entities": "These entities are fed to the engine on every state change. Leave empty to feed observations only via the evaluate service."
         }
       }
     },
     "abort": {
       "already_configured": "KONTINUUM Lite is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "KONTINUUM Lite",
+        "description": "Choose which entities the learning substrate observes.",
+        "data": {
+          "entities": "Entities to learn from"
+        },
+        "data_description": {
+          "entities": "Changing this reloads the integration. Newly added entities start contributing immediately; removed ones stop being observed."
+        }
+      }
     }
   },
   "entity": {
