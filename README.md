@@ -121,4 +121,9 @@ Siehe [ROADMAP.md in ha-kontinuum](https://github.com/Chance-Konstruktion/ha-kon
 
 ## Lizenz
 
-MIT — siehe [LICENSE](LICENSE).
+AGPL-3.0 — siehe [LICENSE](LICENSE).
+
+Diese Integration bindet [`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core)
+(AGPL-3.0) als Requirement ein und lädt es im selben Home-Assistant-Prozess.
+Das verteilte Gesamtwerk steht daher unter der **AGPL-3.0** — passend zur
+Lizenz von kontinuum-core.
