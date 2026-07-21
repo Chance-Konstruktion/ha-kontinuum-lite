@@ -22,6 +22,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import (
     BRAIN_FILE,
     CONF_ENTITIES,
+    CONSOLIDATION_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_ANOMALY,
     SAVE_INTERVAL_SECONDS,
@@ -318,6 +319,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         save_marker["tick"] = tick
 
     scheduler.schedule_interval(_maybe_save_brain, SAVE_INTERVAL_SECONDS)
+
+    # Idle heartbeat: without this, sleep consolidation only ever gets *checked*
+    # on a state change — never during the quiet spell it actually needs, so an
+    # idle night consolidated nothing. Drive core's self-gating tick() on a
+    # timer (no-op unless a quiet spell is due; needs kontinuum-core >= 0.6.2,
+    # otherwise a guarded no-op).
+    def _idle_consolidate() -> None:
+        stats = engine.tick()
+        if stats:
+            _LOGGER.info("KONTINUUM Lite: idle sleep consolidation ran: %s", stats)
+
+    scheduler.schedule_interval(_idle_consolidate, CONSOLIDATION_INTERVAL_SECONDS)
 
     # Reload when the user changes the observed-entity list via options.
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))

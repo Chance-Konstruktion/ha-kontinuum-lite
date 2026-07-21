@@ -88,6 +88,23 @@ class LiteEngine:
         """Service-entry: run one tick and return the current snapshot."""
         return self.observe(payload)
 
+    def tick(self) -> dict[str, Any] | None:
+        """Host heartbeat so idle-only maintenance can run.
+
+        Sleep consolidation in core is only *eligible* during a quiet spell
+        (≥30 min since the last event), but core historically only ever
+        *checked* it on the event path — the one moment it can never be quiet
+        — so a genuinely idle night consolidated zero times. ``kontinuum-core``
+        >= 0.6.2 exposes ``KontinuumEngine.tick()``, a cheap, self-gating
+        heartbeat meant to be called on a timer; it does nothing unless
+        consolidation is due and returns the stats dict when a cycle ran.
+
+        Guarded with ``getattr`` so an older core (which lacks ``tick``) is a
+        safe no-op rather than a crash.
+        """
+        tick = getattr(self._core, "tick", None)
+        return tick() if callable(tick) else None
+
     # ---- Persistence -------------------------------------------------
 
     @property

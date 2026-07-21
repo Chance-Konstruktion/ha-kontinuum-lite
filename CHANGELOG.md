@@ -5,6 +5,21 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+- **Sleep consolidation now runs during idle.** Consolidation is only eligible
+  during a quiet spell (≥30 min since the last event), but it was only ever
+  *checked* on a state change — never during the downtime it needs — so an idle
+  night consolidated nothing. `LiteEngine` gained a `tick()` heartbeat that
+  drives core's self-gating `KontinuumEngine.tick()`, scheduled every
+  `CONSOLIDATION_INTERVAL_SECONDS` (5 min). No-op unless a quiet spell is due;
+  guarded so an older core is a safe no-op.
+
+### Changed
+- Require **kontinuum-core >= 0.6.2** (manifest + test deps), the release that
+  ships the `tick()` idle heartbeat.
+
 ## 0.5.0 (2026-06-20)
 
 ### Added
