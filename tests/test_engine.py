@@ -127,3 +127,26 @@ def test_anomaly_threshold_handles_missing_extra():
     snap = engine_mod.EngineSnapshot()
     assert snap.anomaly_threshold is None
     assert snap.expected_next_room is None
+
+
+def test_tick_delegates_to_core():
+    """LiteEngine.tick() forwards to the core heartbeat and returns its stats."""
+    engine = LiteEngine()
+
+    class _FakeCore:
+        def tick(self):
+            return {"ran": True, "pruned": 3}
+
+    engine._core = _FakeCore()  # type: ignore[assignment]
+    assert engine.tick() == {"ran": True, "pruned": 3}
+
+
+def test_tick_is_noop_on_core_without_tick():
+    """On a kontinuum-core that predates tick() (< 0.6.2), tick() is a safe no-op."""
+    engine = LiteEngine()
+
+    class _OldCore:
+        pass  # no tick attribute
+
+    engine._core = _OldCore()  # type: ignore[assignment]
+    assert engine.tick() is None

@@ -43,3 +43,7 @@ STORAGE_DIR: Final = "kontinuum_lite"
 # metaplasticity meta-state is kept.
 BRAIN_FILE: Final = "brain.json.gz"
 SAVE_INTERVAL_SECONDS: Final = 600  # snapshot the learned brain every 10 min
+# Idle heartbeat: drive core's self-gating tick() so sleep consolidation can
+# fire during genuine downtime (needs kontinuum-core >= 0.6.2). Cheap and a
+# no-op unless a quiet spell is due, so a short interval is safe.
+CONSOLIDATION_INTERVAL_SECONDS: Final = 300  # check for idle consolidation every 5 min
