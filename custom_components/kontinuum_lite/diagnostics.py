@@ -11,7 +11,16 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_ENTITIES, DOMAIN
+from .const import (
+    CONF_HOME_ONLY,
+    CONF_OPERATION_MODE,
+    CONF_PRESET,
+    CONF_TRACK_MODE,
+    DEFAULT_OPERATION_MODE,
+    DEFAULT_PRESET,
+    DEFAULT_TRACK_MODE,
+    DOMAIN,
+)
 from .engine import LiteEngine
 
 
@@ -28,9 +37,15 @@ async def async_get_config_entry_diagnostics(
     except Exception:  # noqa: BLE001
         core_version = "unavailable"
 
+    merged = {**entry.data, **entry.options}
     data: dict[str, Any] = {
         "core_version": core_version,
-        "observed_entities": list(entry.options.get(CONF_ENTITIES, [])),
+        "config": {
+            "preset": merged.get(CONF_PRESET, DEFAULT_PRESET),
+            "operation_mode": merged.get(CONF_OPERATION_MODE, DEFAULT_OPERATION_MODE),
+            "track_mode": merged.get(CONF_TRACK_MODE, DEFAULT_TRACK_MODE),
+            "home_only_mode": merged.get(CONF_HOME_ONLY, False),
+        },
     }
 
     if engine is not None:
@@ -39,6 +54,10 @@ async def async_get_config_entry_diagnostics(
             "supports_persistence": engine.supports_persistence,
             "tick_count": engine.tick_count,
             "total_events": engine.total_events,
+            "tracked_entities": engine.tracked_count,
+            "operation_mode": engine.operation_mode,
+            "track_mode": engine.track_mode,
+            "pending_confirms": len(engine.pending_confirms()),
             "learning_state": snap.learning_state,
             "surprise": snap.surprise,
             "anomaly": snap.anomaly,

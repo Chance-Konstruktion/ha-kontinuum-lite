@@ -39,21 +39,47 @@ Ideal für:
 > Automatisierungen. `token` ist das aktuelle `raum.semantik.zustand`-Symbol,
 > über das die Engine gerade „nachdenkt".
 
-> **Hinweis:** Ist keine Entity ausgewählt, lernt die Integration nichts und
-> meldet das als **Reparatur** (Einstellungen → Reparaturen); sie verschwindet,
-> sobald du in den Optionen Entities auswählst.
+> **Hinweis:** Trackt die Engine (z. B. im `labeled`-Modus ohne passende
+> Labels) keine Entities, lernt sie nichts und meldet das als **Reparatur**
+> (Einstellungen → Reparaturen); sie verschwindet, sobald wieder Entities
+> getrackt werden.
 
-## Was wird gelernt?
+## Einstellungen (nah an Pro)
 
-Bei der Einrichtung (und jederzeit später über **Konfigurieren → Optionen**)
-wählst du die **Entities** aus, von denen gelernt werden soll. Ab dann füttert
-die Integration **automatisch** jeden Zustandswechsel dieser Entities in die
-Engine — kein manuelles Scripting nötig.
+Der Config- und Options-Flow ist bewusst so nah wie möglich an der
+Pro-Integration (`ha-kontinuum`) gehalten — nur ohne Dashboard, Cortex und
+LLM-Anbindung —, damit ein späterer Wechsel Lite → Pro keine Umgewöhnung
+erfordert.
+
+Bei der Einrichtung wählst du eine **Persönlichkeit** (Mutig / Ausgeglichen /
+Konservativ). Alles Weitere steht unter **Konfigurieren → Allgemeine
+Einstellungen**:
+
+- **Betriebsmodus** — `shadow` (nur beobachten), `confirm` (fragt vor jeder
+  Aktion per **actionable Benachrichtigung**) oder `active` (handelt
+  selbstständig).
+- **Entity-Tracking-Modus** — `standard` (alle Entities, Opt-out über das Label
+  `ignore_kontinuum`), `labeled` (Opt-in: nur Entities mit dem Label
+  `kontinuum`) oder `auto` (intelligenter Heuristik-Filter). **Standardmäßig
+  sieht die Engine also alles** — kein manuelles Auswählen einzelner Entities
+  mehr nötig.
+- **Home-Only Modus** — pausiert, wenn niemand zuhause ist.
+
+Die Integration entdeckt alle Entities automatisch (mit Area + Labels aus den
+HA-Registries) und abonniert jeden Zustandswechsel; der Core-Thalamus filtert
+anhand des Tracking-Modus.
 
 > Damit eine Entity gelernt wird, muss der Core sie einem **Raum** zuordnen
-> können. Die Integration liest dafür `area`, `device_class`, `unit` und
-> `friendly_name` aus den HA-Registries. Entities ohne zuordenbaren Bereich
-> werden vom Core ggf. übersprungen — weise ihnen also einen Bereich zu.
+> können (`area`/`friendly_name`). Entities ohne zuordenbaren Bereich werden
+> ggf. übersprungen — weise ihnen also einen Bereich zu.
+
+### Handeln: shadow / confirm / active
+
+Im `confirm`-Modus legt die Engine eine geplante Aktion in die Warteschlange
+und fragt per **actionable Notification** (Buttons **Bestätigen** / **Ablehnen**)
+nach; ohne Companion-App gehen auch die Services `kontinuum_lite.confirm_action`
+/ `reject_action` (mit `confirm_id`). Machst du eine KONTINUUM-Aktion innerhalb
+von 60 s manuell rückgängig, lernt die Engine daraus (negatives Feedback).
 
 ## Services
 
@@ -62,6 +88,9 @@ Engine — kein manuelles Scripting nötig.
 | `kontinuum_lite.evaluate` | Einen Engine-Tick aus manuellem Payload ausführen (Tests/Debug) |
 | `kontinuum_lite.save_brain` | Sofortige Momentaufnahme des Gehirns auf die Platte erzwingen |
 | `kontinuum_lite.reset_brain` | **Alles** Gelernte löschen und kalt neu starten (nicht umkehrbar) |
+| `kontinuum_lite.set_mode` | Betriebsmodus umschalten (`shadow` / `confirm` / `active`) |
+| `kontinuum_lite.confirm_action` | Wartende Aktion bestätigen (`confirm_id` oder `confirm_all: true`) |
+| `kontinuum_lite.reject_action` | Wartende Aktion ablehnen (negatives Feedback an BG/Amygdala) |
 
 ### `evaluate` (optional / fortgeschritten)
 

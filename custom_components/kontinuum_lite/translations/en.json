@@ -3,13 +3,9 @@
     "step": {
       "user": {
         "title": "KONTINUUM Lite",
-        "description": "Minimal, headless neuroinspired learning substrate.",
+        "description": "Choose a learning temperament. You can refine the operation mode and entity tracking afterwards under Configure.",
         "data": {
-          "name": "Name",
-          "entities": "Entities to learn from"
-        },
-        "data_description": {
-          "entities": "These entities are fed to the engine on every state change. Leave empty to feed observations only via the evaluate service."
+          "preset": "Personality"
         }
       }
     },
@@ -21,12 +17,23 @@
     "step": {
       "init": {
         "title": "KONTINUUM Lite",
-        "description": "Choose which entities the learning substrate observes.",
+        "menu_options": {
+          "general": "General settings",
+          "finish": "Save & reload"
+        }
+      },
+      "general": {
+        "title": "General settings",
+        "description": "Personality, operation mode, tracking and general options.",
         "data": {
-          "entities": "Entities to learn from"
+          "preset": "Personality",
+          "operation_mode": "Operation Mode",
+          "track_mode": "Entity Tracking Mode",
+          "home_only_mode": "Home-Only Mode (pause when nobody is home)"
         },
         "data_description": {
-          "entities": "Changing this reloads the integration. Newly added entities start contributing immediately; removed ones stop being observed."
+          "operation_mode": "Shadow only observes; Confirm asks before every action (via an actionable notification); Active acts on its own.",
+          "track_mode": "Standard learns from all entities (opt-out with the 'ignore_kontinuum' label); Labeled only learns from entities carrying the 'kontinuum' label; Automatic uses a smart heuristic filter."
         }
       }
     }
@@ -69,12 +76,46 @@
     "reset_brain": {
       "name": "Reset brain",
       "description": "Erase all learning and reload cold. This cannot be undone."
+    },
+    "set_mode": {
+      "name": "Set operation mode",
+      "description": "Switch between shadow, confirm and active.",
+      "fields": {
+        "mode": {
+          "name": "Mode",
+          "description": "The operation mode to switch to (shadow, confirm or active)."
+        }
+      }
+    },
+    "confirm_action": {
+      "name": "Confirm action",
+      "description": "Confirm a pending action in confirm mode.",
+      "fields": {
+        "confirm_id": {
+          "name": "Confirm ID",
+          "description": "The id of the pending action to confirm."
+        },
+        "confirm_all": {
+          "name": "Confirm all",
+          "description": "Confirm every pending action instead of a single one."
+        }
+      }
+    },
+    "reject_action": {
+      "name": "Reject action",
+      "description": "Reject a pending action in confirm mode (negative feedback).",
+      "fields": {
+        "confirm_id": {
+          "name": "Confirm ID",
+          "description": "The id of the pending action to reject."
+        }
+      }
     }
   },
   "issues": {
     "no_entities": {
-      "title": "KONTINUUM Lite has no entities to learn from",
-      "description": "No entities are selected, so the learning substrate stays at cold start and never learns. Open the integration's options (Settings → Devices & services → KONTINUUM Lite → Configure) and choose the entities it should observe. You can ignore this if you intentionally feed observations only via the evaluate service."
+      "title": "KONTINUUM Lite is not tracking any entities",
+      "description": "The engine currently tracks no entities, so it stays at cold start and never learns. This usually means Tracking Mode is set to 'Labeled' but no entity carries the 'kontinuum' label. Open Settings → Devices & services → KONTINUUM Lite → Configure → General settings and switch Tracking Mode to 'Standard', or add the 'kontinuum' label to the entities you want it to learn from."
     }
   }
 }

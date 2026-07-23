@@ -27,3 +27,56 @@ reset_brain:
   description: >-
     Erase all learning (hippocampus, predictive, cerebellum, basal ganglia and
     the metaplasticity meta-state) and reload cold. This cannot be undone.
+
+set_mode:
+  name: Set operation mode
+  description: >-
+    Switch the operation mode: shadow (only observe), confirm (ask before every
+    action) or active (act autonomously).
+  fields:
+    mode:
+      name: Mode
+      description: The operation mode to switch to.
+      required: true
+      example: confirm
+      selector:
+        select:
+          options:
+            - shadow
+            - confirm
+            - active
+
+confirm_action:
+  name: Confirm action
+  description: >-
+    Confirm a pending action (confirm mode). Provide the confirm_id from the
+    notification, or set confirm_all to run every pending action.
+  fields:
+    confirm_id:
+      name: Confirm ID
+      description: The id of the pending action to confirm.
+      required: false
+      example: c_1721740000_42
+      selector:
+        text:
+    confirm_all:
+      name: Confirm all
+      description: Confirm every pending action instead of a single one.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+reject_action:
+  name: Reject action
+  description: >-
+    Reject a pending action (confirm mode). Feeds negative reinforcement back
+    into the basal ganglia and amygdala so the engine learns from the rejection.
+  fields:
+    confirm_id:
+      name: Confirm ID
+      description: The id of the pending action to reject.
+      required: true
+      example: c_1721740000_42
+      selector:
+        text:
