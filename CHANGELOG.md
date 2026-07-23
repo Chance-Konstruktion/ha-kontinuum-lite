@@ -16,9 +16,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `CONSOLIDATION_INTERVAL_SECONDS` (5 min). No-op unless a quiet spell is due;
   guarded so an older core is a safe no-op.
 
+### Added
+- **README status badges.** A row of real, clickable shields at the top of the
+  README — Tests / hassfest / HACS-Validate workflow status, HACS custom-repo,
+  minimum Home Assistant version, pinned `kontinuum-core`, and the AGPL-3.0
+  licence — each linking to the live source it reports on.
+
 ### Changed
-- Require **kontinuum-core >= 0.6.2** (manifest + test deps), the release that
-  ships the `tick()` idle heartbeat.
+- Require **kontinuum-core >= 0.6.3** (manifest + test deps), the current
+  release of the family; the `tick()` idle heartbeat (>= 0.6.2) stays a safe
+  no-op on older cores.
 
 ## 0.5.0 (2026-06-20)
 

@@ -1,0 +1,10 @@
+KONTINUUM Lite
+Copyright (C) 2026 Chance-Konstruktion
+
+This program is licensed under the GNU Affero General Public License v3.0;
+see the LICENSE file for the full text.
+
+This integration depends on and links, in the same Home Assistant process,
+kontinuum-core (https://github.com/Chance-Konstruktion/kontinuum-core), which
+is licensed under the GNU Affero General Public License v3.0. The combined
+work is therefore distributed under the AGPL-3.0.
