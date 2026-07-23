@@ -1,4 +1,11 @@
-"""KONTINUUM Lite integration."""
+"""KONTINUUM Lite integration.
+
+Super-Lite: the same learning + acting brain as the Pro integration
+(``ha-kontinuum``) — presets, shadow/confirm/active operation modes and
+standard/labeled/auto entity tracking — but without the "ballast": no
+dashboard, no Cortex/LLM agents. Everything neuro-inspired lives in
+``kontinuum-core``; this module is only the Home Assistant glue.
+"""
 from __future__ import annotations
 
 import gzip
@@ -8,7 +15,11 @@ import os
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.const import (
+    EVENT_HOMEASSISTANT_STOP,
+    EVENT_STATE_CHANGED,
+    Platform,
+)
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -17,20 +28,36 @@ from homeassistant.helpers import (
     issue_registry as ir,
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
+    ACTION_CONFIRM_PREFIX,
+    ACTION_REJECT_PREFIX,
     BRAIN_FILE,
-    CONF_ENTITIES,
+    CONF_HOME_ONLY,
+    CONF_OPERATION_MODE,
+    CONF_PRESET,
+    CONF_TRACK_MODE,
     CONSOLIDATION_INTERVAL_SECONDS,
+    DEFAULT_OPERATION_MODE,
+    DEFAULT_PRESET,
+    DEFAULT_TRACK_MODE,
     DOMAIN,
+    EVENT_ACTION_EXECUTED,
     EVENT_ANOMALY,
+    EVENT_CONFIRM_REJECTED,
+    MODE_CONFIRM,
+    NOTIFY_TAG_PREFIX,
+    PRESETS,
     SAVE_INTERVAL_SECONDS,
+    SERVICE_CONFIRM_ACTION,
     SERVICE_EVALUATE,
+    SERVICE_REJECT_ACTION,
     SERVICE_RESET_BRAIN,
     SERVICE_SAVE_BRAIN,
+    SERVICE_SET_MODE,
     SIGNAL_UPDATE,
     STORAGE_DIR,
+    VALID_MODES,
 )
 from .engine import LiteEngine
 from .ha_scheduler import HAScheduler
@@ -82,12 +109,7 @@ def _delete_file(path: str) -> None:
 
 
 def _reset_files(engine: LiteEngine, brain_path: str) -> None:
-    """Erase all persisted learning so a reload comes back cold.
-
-    Deletes the brain snapshot and the core's metaplasticity file (its path is
-    read from the core itself, so a future rename there doesn't silently leave
-    stale state behind).
-    """
+    """Erase all persisted learning so a reload comes back cold."""
     _delete_file(brain_path)
     mp = getattr(engine.core, "metaplasticity", None)
     mp_path = getattr(mp, "_path", None)
@@ -95,11 +117,14 @@ def _reset_files(engine: LiteEngine, brain_path: str) -> None:
         _delete_file(mp_path)
 
 
-def _selected_entities(entry: ConfigEntry) -> list[str]:
-    """Entities the user picked to feed the engine (options override data)."""
-    if CONF_ENTITIES in entry.options:
-        return list(entry.options.get(CONF_ENTITIES) or [])
-    return list(entry.data.get(CONF_ENTITIES, []) or [])
+# ── Config accessors ───────────────────────────────────────────────────
+
+
+def _config(entry: ConfigEntry) -> dict[str, Any]:
+    """Effective config: options override entry data."""
+    merged = dict(entry.data)
+    merged.update(entry.options)
+    return merged
 
 
 def _no_entities_issue_id(entry: ConfigEntry) -> str:
@@ -108,17 +133,16 @@ def _no_entities_issue_id(entry: ConfigEntry) -> str:
 
 @callback
 def _async_update_no_entities_issue(
-    hass: HomeAssistant, entry: ConfigEntry, entities: list[str]
+    hass: HomeAssistant, entry: ConfigEntry, tracked: int
 ) -> None:
-    """Raise a repair when nothing is selected to learn from.
+    """Raise a repair when the thalamus ends up tracking nothing.
 
-    A freshly installed instance with no observed entities silently sits at
-    cold_start forever — the single most common "it doesn't do anything"
-    misconfiguration. Surface it as a dismissible repair that clears itself
-    once entities are chosen.
+    With ``track_mode=standard`` this should essentially never happen, but a
+    ``labeled`` setup with no labelled entities would silently sit at cold
+    start forever — so surface it as a dismissible repair that clears itself.
     """
     issue_id = _no_entities_issue_id(entry)
-    if entities:
+    if tracked > 0:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
     ir.async_create_issue(
@@ -131,77 +155,108 @@ def _async_update_no_entities_issue(
     )
 
 
-@callback
-def _register_entities(
-    hass: HomeAssistant, engine: LiteEngine, entity_ids: list[str]
-) -> None:
-    """Tell the core about each entity with its area + metadata.
+# ── Entity discovery ───────────────────────────────────────────────────
 
-    The core's thalamus drops any observation for an entity it doesn't know
-    or can't place in a room, so this registration is what makes auto-learning
-    actually work. Metadata is resolved from the entity/device/area registries
-    and falls back to live state attributes for registry-less entities.
+
+@callback
+def _label_names(hass: HomeAssistant) -> dict[str, str]:
+    """label_id → label name (empty when the label registry is unavailable)."""
+    try:
+        from homeassistant.helpers import label_registry as lr
+
+        registry = lr.async_get(hass)
+        return {label.label_id: label.name for label in registry.async_list_labels()}
+    except (ImportError, AttributeError):  # pragma: no cover - old HA cores
+        return {}
+
+
+@callback
+def _discover_and_register(hass: HomeAssistant, engine: LiteEngine) -> int:
+    """Register every HA entity with the core thalamus (with area + labels).
+
+    The thalamus then decides — based on ``track_mode`` and the
+    ``kontinuum`` / ``ignore_kontinuum`` labels — which entities it actually
+    keeps. This mirrors Pro: the integration hands over everything, the core
+    filters. Returns the number of entities the thalamus ended up tracking.
     """
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
     area_reg = ar.async_get(hass)
+    label_names = _label_names(hass)
 
-    for entity_id in entity_ids:
+    seen: set[str] = set()
+
+    for entry in ent_reg.entities.values():
+        entity_id = entry.entity_id
+        seen.add(entity_id)
         meta: dict[str, Any] = {"domain": entity_id.split(".")[0]}
-        area_id: str | None = None
 
-        entry = ent_reg.async_get(entity_id)
-        if entry is not None:
-            area_id = entry.area_id
-            if area_id is None and entry.device_id:
-                device = dev_reg.async_get(entry.device_id)
-                if device is not None:
-                    area_id = device.area_id
-            meta["device_class"] = (
-                entry.device_class or entry.original_device_class or ""
-            )
-            meta["unit"] = entry.unit_of_measurement or ""
-            meta["friendly_name"] = entry.name or entry.original_name or ""
-
-        state = hass.states.get(entity_id)
-        if state is not None:
-            attrs = state.attributes
-            meta.setdefault("device_class", attrs.get("device_class") or "")
-            if not meta.get("unit"):
-                meta["unit"] = attrs.get("unit_of_measurement") or ""
-            if not meta.get("friendly_name"):
-                meta["friendly_name"] = attrs.get("friendly_name") or ""
-
+        area_id = entry.area_id
+        if area_id is None and entry.device_id:
+            device = dev_reg.async_get(entry.device_id)
+            if device is not None:
+                area_id = device.area_id
         if area_id:
             area = area_reg.async_get_area(area_id)
             if area is not None:
                 meta["ha_area"] = area.name
 
-        if not meta.get("ha_area"):
-            _LOGGER.debug(
-                "KONTINUUM Lite: %s has no resolvable area; the core may skip "
-                "it unless it can infer a room",
-                entity_id,
-            )
+        meta["device_class"] = entry.device_class or entry.original_device_class or ""
+        meta["unit"] = entry.unit_of_measurement or ""
+        meta["friendly_name"] = entry.name or entry.original_name or ""
+
+        labels = [
+            label_names[lid]
+            for lid in getattr(entry, "labels", set()) or ()
+            if lid in label_names
+        ]
+        if labels:
+            meta["labels"] = labels
+
         engine.register_entity(entity_id, **meta)
+
+    # Registry-less entities (e.g. template/legacy) — resolve from live state.
+    for state in hass.states.async_all():
+        if state.entity_id in seen:
+            continue
+        attrs = state.attributes
+        engine.register_entity(
+            state.entity_id,
+            domain=state.entity_id.split(".")[0],
+            device_class=attrs.get("device_class") or "",
+            unit=attrs.get("unit_of_measurement") or "",
+            friendly_name=attrs.get("friendly_name") or "",
+        )
+
+    return engine.tracked_count
+
+
+# ── Home-only helper ───────────────────────────────────────────────────
+
+
+@callback
+def _anyone_home(hass: HomeAssistant) -> bool:
+    """True when at least one person is home (or no person entities exist)."""
+    persons = hass.states.async_all("person")
+    if not persons:
+        return True
+    return any(state.state == "home" for state in persons)
+
+
+# ── Observation + action pipeline ──────────────────────────────────────
 
 
 @callback
 def _ingest(
     hass: HomeAssistant, engine: LiteEngine, observation: dict[str, Any]
 ) -> None:
-    """Feed one observation to the engine and surface the result.
-
-    Shared by the state-change listener and the ``evaluate`` service so both
-    paths fire the anomaly event on the same rising edge.
-    """
+    """Feed one observation to the engine, surface anomaly, act on decisions."""
     previously_anomalous = engine.snapshot.anomaly
     snap = engine.observe(observation)
 
     async_dispatcher_send(hass, SIGNAL_UPDATE)
 
-    # Fire on the anomaly edge only. The threshold itself is the core's
-    # adaptive decision (baseline + 2σ of recent surprise), not a constant.
+    # Anomaly edge (adaptive threshold decided by the core).
     if snap.anomaly and not previously_anomalous:
         hass.bus.async_fire(
             EVENT_ANOMALY,
@@ -213,22 +268,195 @@ def _ingest(
             },
         )
 
+    _handle_decision(hass, engine)
+
 
 @callback
-def _make_state_listener(hass: HomeAssistant, engine: LiteEngine):
-    """Build the state-change callback that turns HA events into observations."""
+def _handle_decision(hass: HomeAssistant, engine: LiteEngine) -> None:
+    """Execute or queue-for-confirmation the core's advisory decision.
+
+    The *stage* is decided by the core from the operation mode: SHADOW keeps
+    it at OBSERVE (nothing to do here), CONFIRM yields stage CONFIRM, ACTIVE
+    (or an activated semantic) yields EXECUTE. We just carry it out.
+    """
+    decision = engine.last_decision
+    if not decision:
+        return
+    stage = decision.get("stage")
+    entity_id = decision.get("entity_id")
+    token = decision.get("token", "")
+    if not entity_id:
+        return
+    semantic = token.split(".")[1] if token.count(".") == 2 else ""
+
+    if stage == "EXECUTE":
+        call = engine.service_call_for(decision)
+        if not call:
+            return
+        _async_call(hass, call["domain"], call["service"], call["data"])
+        engine.mark_own_action(entity_id, token=token, semantic=semantic)
+        hass.bus.async_fire(
+            EVENT_ACTION_EXECUTED,
+            {"entity_id": entity_id, "token": token, "confirmed": False},
+        )
+        _LOGGER.info("KONTINUUM Lite: executed %s → %s", token, entity_id)
+
+    elif stage == "CONFIRM":
+        confirm_id = engine.queue_confirm(
+            decision,
+            reasoning=f"conf={decision.get('confidence')}, util={decision.get('utility')}",
+            context={"mode": MODE_CONFIRM},
+        )
+        if confirm_id:
+            _send_confirm_notification(hass, decision, confirm_id)
+            _LOGGER.info(
+                "KONTINUUM Lite: awaiting confirm %s → %s (id=%s)",
+                token,
+                entity_id,
+                confirm_id,
+            )
+
+
+@callback
+def _async_call(
+    hass: HomeAssistant, domain: str, service: str, data: dict[str, Any]
+) -> None:
+    """Fire-and-forget service call."""
+    hass.async_create_task(hass.services.async_call(domain, service, data))
+
+
+@callback
+def _send_confirm_notification(
+    hass: HomeAssistant, decision: dict[str, Any], confirm_id: str
+) -> None:
+    """Ask the user to confirm/reject via an actionable mobile notification.
+
+    Falls back to a persistent notification that documents the two services,
+    so confirmation works even without the companion app.
+    """
+    token = decision.get("token", "")
+    entity_id = decision.get("entity_id", "")
+    action_label = token.split(".")[2] if token.count(".") == 2 else token
+    title = "KONTINUUM Lite – Aktion bestätigen?"
+    message = (
+        f"**{entity_id}** → {action_label}\n"
+        f"Konfidenz: {decision.get('confidence')} · "
+        f"Nutzen: {decision.get('utility')} · Risiko: {decision.get('risk')}"
+    )
+
+    # Actionable mobile notification (companion app renders the buttons).
+    if hass.services.has_service("notify", "notify"):
+        _async_call(
+            hass,
+            "notify",
+            "notify",
+            {
+                "title": title,
+                "message": message,
+                "data": {
+                    "tag": f"{NOTIFY_TAG_PREFIX}{confirm_id}",
+                    "actions": [
+                        {
+                            "action": f"{ACTION_CONFIRM_PREFIX}{confirm_id}",
+                            "title": "✅ Bestätigen",
+                        },
+                        {
+                            "action": f"{ACTION_REJECT_PREFIX}{confirm_id}",
+                            "title": "❌ Ablehnen",
+                        },
+                    ],
+                },
+            },
+        )
+
+    # Fallback / audit trail as a persistent notification.
+    _async_call(
+        hass,
+        "persistent_notification",
+        "create",
+        {
+            "title": title,
+            "message": (
+                f"{message}\n\n"
+                f"Bestätigen: Service `kontinuum_lite.confirm_action` mit "
+                f"`confirm_id: {confirm_id}`\n"
+                f"Ablehnen: `kontinuum_lite.reject_action` mit "
+                f"`confirm_id: {confirm_id}`"
+            ),
+            "notification_id": f"{NOTIFY_TAG_PREFIX}{confirm_id}",
+        },
+    )
+
+
+@callback
+def _execute_pending(hass: HomeAssistant, engine: LiteEngine, confirm_id: str) -> bool:
+    """Run a previously queued confirmation. Returns True if it fired."""
+    decision_obj = engine.take_pending(confirm_id)
+    if decision_obj is None:
+        return False
+    call = engine.get_service_call_obj(decision_obj)
+    if not call:
+        return False
+    _async_call(hass, call["domain"], call["service"], call["data"])
+    token = getattr(decision_obj, "token", "")
+    semantic = token.split(".")[1] if token.count(".") == 2 else ""
+    engine.mark_own_action(call["entity_id"], token=token, semantic=semantic)
+    hass.bus.async_fire(
+        EVENT_ACTION_EXECUTED,
+        {"entity_id": call["entity_id"], "token": token, "confirmed": True},
+    )
+    # Clear the persistent fallback notification.
+    _async_call(
+        hass,
+        "persistent_notification",
+        "dismiss",
+        {"notification_id": f"{NOTIFY_TAG_PREFIX}{confirm_id}"},
+    )
+    return True
+
+
+@callback
+def _make_state_listener(hass: HomeAssistant, engine: LiteEngine, entry: ConfigEntry):
+    """Global EVENT_STATE_CHANGED handler — the thalamus does the filtering."""
 
     @callback
     def _on_state_change(event: Event) -> None:
+        entity_id = event.data.get("entity_id", "")
         new_state = event.data.get("new_state")
         if new_state is None:  # entity removed
             return
         old_state = event.data.get("old_state")
+
+        # Never learn from our own entities — otherwise every observation
+        # writes the surprise/anomaly sensors, whose state change would be
+        # re-observed, looping forever. Our sensor entity_ids depend on the
+        # entry title, so match on the registry platform, not a name prefix.
+        own = er.async_get(hass).async_get(entity_id)
+        if own is not None and own.platform == DOMAIN:
+            return
+
+        # Ignore no-op state repeats.
+        if old_state is not None and old_state.state == new_state.state:
+            return
+
+        # Home-only: pause entirely while nobody is home (mirrors Pro).
+        cfg = _config(entry)
+        if cfg.get(CONF_HOME_ONLY, False) and not _anyone_home(hass):
+            return
+
+        # Suppress the echo of our own actions (~10 s window).
+        if engine.is_own_action(entity_id):
+            return
+
+        # Quick manual undo of one of our actions → negative feedback.
+        if engine.check_override(entity_id, new_state.state):
+            _LOGGER.debug("KONTINUUM Lite: override on %s", entity_id)
+
         _ingest(
             hass,
             engine,
             {
-                "entity_id": event.data["entity_id"],
+                "entity_id": entity_id,
                 "new_state": new_state.state,
                 "old_state": old_state.state if old_state else None,
                 "timestamp": new_state.last_updated,
@@ -236,6 +464,9 @@ def _make_state_listener(hass: HomeAssistant, engine: LiteEngine):
         )
 
     return _on_state_change
+
+
+# ── Setup / teardown ───────────────────────────────────────────────────
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -247,26 +478,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket[entry.entry_id] = engine
     bucket.setdefault("_schedulers", {})[entry.entry_id] = scheduler
 
-    # Best-effort: load persisted metaplasticity state and start its
-    # 24 h adaptation loop. Failures are non-fatal — the engine still
-    # works without it.
+    cfg = _config(entry)
+
+    # Metaplasticity bootstrap (best effort).
     try:
         await hass.async_add_executor_job(engine.core.metaplasticity.load)
         engine.core.metaplasticity.start(interval_hours=24)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("MetaPlasticity bootstrap failed; continuing without it")
 
-    # Restore the full learned brain so learning survives restarts. Without
-    # this the hippocampus/predictive/cerebellum/basal-ganglia state was
-    # rebuilt from zero on every reload. No-op on kontinuum-core without
-    # to_dict/from_dict.
+    # Restore the learned brain so learning survives restarts.
     brain_path = _brain_path(storage_path)
     try:
         loaded = await hass.async_add_executor_job(_load_brain, engine, brain_path)
         if loaded:
             _LOGGER.info(
-                "KONTINUUM Lite: restored brain (%d ticks)",
-                engine.snapshot.tick_count,
+                "KONTINUUM Lite: restored brain (%d ticks)", engine.snapshot.tick_count
             )
         elif not engine.supports_persistence:
             _LOGGER.info(
@@ -276,39 +503,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Brain load failed; starting cold")
 
-    # Auto-ingestion: register the chosen entities and subscribe to their
-    # state changes so the engine learns on its own. Without this the engine
-    # only ever sees manual `evaluate` calls and stays at cold_start forever.
-    entities = _selected_entities(entry)
-    _async_update_no_entities_issue(hass, entry, entities)
-    if entities:
-        _register_entities(hass, engine, entities)
-        # Seed from current state so learning starts now, not on the next change.
-        for entity_id in entities:
-            state = hass.states.get(entity_id)
-            if state is not None:
-                _ingest(
-                    hass,
-                    engine,
-                    {
-                        "entity_id": entity_id,
-                        "new_state": state.state,
-                        "old_state": None,
-                        "timestamp": state.last_updated,
-                    },
-                )
-        entry.async_on_unload(
-            async_track_state_change_event(
-                hass, entities, _make_state_listener(hass, engine)
-            )
-        )
-        _LOGGER.debug("KONTINUUM Lite: observing %d entities", len(entities))
+    # ── Apply preset + operation mode + track mode ──────────────────
+    preset_key = cfg.get(CONF_PRESET, DEFAULT_PRESET)
+    engine.apply_preset(PRESETS.get(preset_key, PRESETS[DEFAULT_PRESET]))
+    engine.set_track_mode(cfg.get(CONF_TRACK_MODE, DEFAULT_TRACK_MODE))
+    engine.set_operation_mode(cfg.get(CONF_OPERATION_MODE, DEFAULT_OPERATION_MODE))
+    _LOGGER.info(
+        "KONTINUUM Lite: preset=%s, mode=%s, track=%s, home_only=%s",
+        preset_key,
+        engine.operation_mode,
+        engine.track_mode,
+        cfg.get(CONF_HOME_ONLY, False),
+    )
 
-    # Snapshot the brain periodically so an unclean shutdown (power loss,
-    # OS kill) loses at most SAVE_INTERVAL_SECONDS of learning. Skip the
-    # write when no new ticks happened since the last save — headless
-    # instances often idle, and HA frequently runs on flash/SD where
-    # needless writes cost endurance. The unload handler does a final save.
+    # ── Discover entities (thalamus filters via track_mode + labels) ─
+    tracked = _discover_and_register(hass, engine)
+    _async_update_no_entities_issue(hass, entry, tracked)
+    _LOGGER.debug("KONTINUUM Lite: thalamus tracking %d entities", tracked)
+
+    # Seed from current state so learning starts now, not on the next change.
+    for state in hass.states.async_all():
+        if engine.entity_semantic(state.entity_id) is None:
+            continue
+        _ingest(
+            hass,
+            engine,
+            {
+                "entity_id": state.entity_id,
+                "new_state": state.state,
+                "old_state": None,
+                "timestamp": state.last_updated,
+            },
+        )
+
+    # ── Subscribe to all state changes (Pro-style global listener) ──
+    entry.async_on_unload(
+        hass.bus.async_listen(
+            EVENT_STATE_CHANGED, _make_state_listener(hass, engine, entry)
+        )
+    )
+
+    # ── Actionable-notification button handler ──────────────────────
+    @callback
+    def _on_mobile_action(event: Event) -> None:
+        action = event.data.get("action", "")
+        if action.startswith(ACTION_CONFIRM_PREFIX):
+            _execute_pending(hass, engine, action[len(ACTION_CONFIRM_PREFIX):])
+        elif action.startswith(ACTION_REJECT_PREFIX):
+            confirm_id = action[len(ACTION_REJECT_PREFIX):]
+            result = engine.reject_pending(confirm_id)
+            _async_call(
+                hass,
+                "persistent_notification",
+                "dismiss",
+                {"notification_id": f"{NOTIFY_TAG_PREFIX}{confirm_id}"},
+            )
+            if result:
+                hass.bus.async_fire(EVENT_CONFIRM_REJECTED, result)
+
+    entry.async_on_unload(
+        hass.bus.async_listen("mobile_app_notification_action", _on_mobile_action)
+    )
+
+    # ── Periodic brain snapshot (skip when nothing changed) ─────────
     save_marker = {"tick": -1}
 
     def _maybe_save_brain() -> None:
@@ -320,11 +577,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     scheduler.schedule_interval(_maybe_save_brain, SAVE_INTERVAL_SECONDS)
 
-    # Idle heartbeat: without this, sleep consolidation only ever gets *checked*
-    # on a state change — never during the quiet spell it actually needs, so an
-    # idle night consolidated nothing. Drive core's self-gating tick() on a
-    # timer (no-op unless a quiet spell is due; needs kontinuum-core >= 0.6.2,
-    # otherwise a guarded no-op).
+    # ── Idle heartbeat for sleep consolidation ──────────────────────
     def _idle_consolidate() -> None:
         stats = engine.tick()
         if stats:
@@ -332,12 +585,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     scheduler.schedule_interval(_idle_consolidate, CONSOLIDATION_INTERVAL_SECONDS)
 
-    # Reload when the user changes the observed-entity list via options.
+    # Reload when options change.
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
-    # Belt-and-suspenders durability: flush on HA shutdown too. The unload
-    # path normally runs on stop and saves, but this guarantees a final
-    # snapshot even if it doesn't. Removed automatically on unload.
+    # Final save on HA shutdown.
     async def _on_ha_stop(_event: Event) -> None:
         await hass.async_add_executor_job(_save_brain, engine, brain_path)
         try:
@@ -354,13 +605,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a v1 entry (manual entity list) to the v2 preset/mode schema."""
+    if entry.version >= 2:
+        return True
+    new_data = {
+        CONF_PRESET: DEFAULT_PRESET,
+        CONF_OPERATION_MODE: DEFAULT_OPERATION_MODE,
+        CONF_TRACK_MODE: DEFAULT_TRACK_MODE,
+        CONF_HOME_ONLY: False,
+    }
+    hass.config_entries.async_update_entry(
+        entry, data=new_data, options={}, version=2
+    )
+    _LOGGER.info(
+        "KONTINUUM Lite: migrated entry to v2 (preset/mode/track). The old "
+        "manual entity list is superseded by track_mode='standard' (all "
+        "entities, opt-out via the 'ignore_kontinuum' label)."
+    )
+    return True
+
+
 @callback
 def _resolve_engine(hass: HomeAssistant) -> LiteEngine | None:
-    """Return the active engine (single-instance integration).
-
-    Looked up fresh from ``hass.data`` so service handlers never hold a stale
-    reference to an engine discarded by a reload.
-    """
+    """Return the active engine (single-instance integration)."""
     for key, value in hass.data.get(DOMAIN, {}).items():
         if not key.startswith("_") and isinstance(value, LiteEngine):
             return value
@@ -374,7 +642,6 @@ def _async_register_services(hass: HomeAssistant) -> None:
         return
 
     async def _handle_evaluate(call: ServiceCall) -> None:
-        """Run one engine tick from a manual payload and push updates."""
         engine = _resolve_engine(hass)
         if engine is None:
             return
@@ -383,7 +650,6 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _ingest(hass, engine, payload)
 
     async def _handle_save_brain(call: ServiceCall) -> None:
-        """Force an immediate brain snapshot to disk."""
         engine = _resolve_engine(hass)
         if engine is None:
             return
@@ -392,7 +658,6 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("KONTINUUM Lite: brain saved on request")
 
     async def _handle_reset_brain(call: ServiceCall) -> None:
-        """Erase all learning and reload cold. Cannot be undone."""
         data = hass.data.setdefault(DOMAIN, {})
         entry_ids = [
             key
@@ -404,13 +669,63 @@ def _async_register_services(hass: HomeAssistant) -> None:
             reset.add(entry_id)
             await hass.config_entries.async_reload(entry_id)
 
+    async def _handle_set_mode(call: ServiceCall) -> None:
+        engine = _resolve_engine(hass)
+        if engine is None:
+            return
+        mode = str(call.data.get("mode", "")).strip().lower()
+        if mode not in VALID_MODES:
+            _LOGGER.warning(
+                "KONTINUUM Lite: invalid mode '%s' (allowed: %s)",
+                mode,
+                ", ".join(sorted(VALID_MODES)),
+            )
+            return
+        if engine.set_operation_mode(mode):
+            async_dispatcher_send(hass, SIGNAL_UPDATE)
+            _LOGGER.info("KONTINUUM Lite: operation mode → %s", mode)
+
+    async def _handle_confirm_action(call: ServiceCall) -> None:
+        engine = _resolve_engine(hass)
+        if engine is None:
+            return
+        if call.data.get("confirm_all", False):
+            for pending in list(engine.pending_confirms()):
+                _execute_pending(hass, engine, pending.get("id", ""))
+            return
+        confirm_id = str(call.data.get("confirm_id", ""))
+        if not _execute_pending(hass, engine, confirm_id):
+            _LOGGER.warning(
+                "KONTINUUM Lite: confirm_id '%s' not found or expired", confirm_id
+            )
+
+    async def _handle_reject_action(call: ServiceCall) -> None:
+        engine = _resolve_engine(hass)
+        if engine is None:
+            return
+        confirm_id = str(call.data.get("confirm_id", ""))
+        result = engine.reject_pending(confirm_id)
+        _async_call(
+            hass,
+            "persistent_notification",
+            "dismiss",
+            {"notification_id": f"{NOTIFY_TAG_PREFIX}{confirm_id}"},
+        )
+        if result:
+            hass.bus.async_fire(EVENT_CONFIRM_REJECTED, result)
+        else:
+            _LOGGER.warning("KONTINUUM Lite: confirm_id '%s' not found", confirm_id)
+
     hass.services.async_register(DOMAIN, SERVICE_EVALUATE, _handle_evaluate)
     hass.services.async_register(DOMAIN, SERVICE_SAVE_BRAIN, _handle_save_brain)
     hass.services.async_register(DOMAIN, SERVICE_RESET_BRAIN, _handle_reset_brain)
+    hass.services.async_register(DOMAIN, SERVICE_SET_MODE, _handle_set_mode)
+    hass.services.async_register(DOMAIN, SERVICE_CONFIRM_ACTION, _handle_confirm_action)
+    hass.services.async_register(DOMAIN, SERVICE_REJECT_ACTION, _handle_reject_action)
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the entry so a changed entity selection takes effect."""
+    """Reload the entry so changed settings take effect."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -429,8 +744,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         brain_path = _brain_path(hass.config.path(STORAGE_DIR))
         if engine is not None and resetting:
-            # reset_brain requested: discard learning instead of persisting it,
-            # so the imminent reload comes back cold.
             try:
                 await hass.async_add_executor_job(_reset_files, engine, brain_path)
                 _LOGGER.info("KONTINUUM Lite: brain reset — learning cleared")
@@ -447,13 +760,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.exception("MetaPlasticity save failed during unload")
         if scheduler is not None:
             scheduler.cancel_all()
-        # Drop services + container if no entries remain (ignore bookkeeping keys).
         remaining = {k for k in bucket if not k.startswith("_")}
         if not remaining:
             for service in (
                 SERVICE_EVALUATE,
                 SERVICE_SAVE_BRAIN,
                 SERVICE_RESET_BRAIN,
+                SERVICE_SET_MODE,
+                SERVICE_CONFIRM_ACTION,
+                SERVICE_REJECT_ACTION,
             ):
                 hass.services.async_remove(DOMAIN, service)
             hass.data.pop(DOMAIN, None)

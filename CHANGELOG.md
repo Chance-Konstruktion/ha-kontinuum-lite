@@ -7,6 +7,37 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## Unreleased
 
+### Added
+- **Pro-parity config & options flow (no more manual per-entity picking).**
+  Lite now mirrors the Pro integration as closely as possible so switching
+  Lite → Pro feels familiar. The initial flow asks for a **preset**
+  (Mutig / Ausgeglichen / Konservativ); the menu-based options flow's
+  **General** step exposes the same fields as Pro (minus the dashboard):
+  - **Operation mode** — `shadow` (only observe), `confirm` (ask before every
+    action via an actionable mobile notification) or `active` (act on its own).
+  - **Entity tracking mode** — `standard` (all entities, opt-out via the
+    `ignore_kontinuum` label), `labeled` (opt-in: only entities with the
+    `kontinuum` label) or `auto` (smart heuristic filter). This replaces the
+    old requirement to hand-pick every entity: by default the engine now sees
+    **everything**, exactly like Pro.
+  - **Home-Only mode** — pause while nobody is home.
+- **Acting brain wired up.** The core's prefrontal cortex + cerebellum (already
+  shipped in `kontinuum-core`) now drive real Home Assistant service calls.
+  In `active` mode the engine acts autonomously; in `confirm` mode it queues
+  the action and asks via an actionable notification (buttons **Bestätigen** /
+  **Ablehnen**), with `kontinuum_lite.confirm_action` / `reject_action` as a
+  dashboard-free fallback. Manual undo within 60 s feeds negative
+  reinforcement back into the brain, just like Pro. No LLM/Cortex layer.
+- **New services**: `set_mode`, `confirm_action`, `reject_action`.
+- **New events**: `kontinuum_lite_action_executed`, `kontinuum_lite_confirm_rejected`.
+
+### Changed
+- **Global state-change ingestion.** Instead of subscribing to a hand-picked
+  entity list, Lite now discovers all entities (with area + labels) and
+  subscribes to every state change; the core thalamus does the filtering via
+  `track_mode`. Config entries migrate automatically to the new v2 schema; the
+  old manual entity list is superseded by `track_mode='standard'`.
+
 ### Fixed
 - **Sleep consolidation now runs during idle.** Consolidation is only eligible
   during a quiet spell (≥30 min since the last event), but it was only ever

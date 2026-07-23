@@ -15,13 +15,22 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa
 
 from custom_components.kontinuum_lite.const import (  # noqa: E402
     BRAIN_FILE,
-    CONF_ENTITIES,
-    CONF_NAME,
+    CONF_HOME_ONLY,
+    CONF_OPERATION_MODE,
+    CONF_PRESET,
+    CONF_TRACK_MODE,
+    DEFAULT_OPERATION_MODE,
+    DEFAULT_PRESET,
     DOMAIN,
+    SERVICE_CONFIRM_ACTION,
     SERVICE_EVALUATE,
+    SERVICE_REJECT_ACTION,
     SERVICE_RESET_BRAIN,
     SERVICE_SAVE_BRAIN,
+    SERVICE_SET_MODE,
     STORAGE_DIR,
+    TRACK_LABELED,
+    TRACK_STANDARD,
 )
 
 
@@ -43,13 +52,24 @@ def _isolate_storage(hass: HomeAssistant):
     shutil.rmtree(path, ignore_errors=True)
 
 
-async def _setup(hass: HomeAssistant, entities: list[str] | None = None):
+async def _setup(
+    hass: HomeAssistant,
+    *,
+    track_mode: str = TRACK_STANDARD,
+    operation_mode: str = DEFAULT_OPERATION_MODE,
+    home_only: bool = False,
+):
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=DOMAIN,
         title="Test",
-        data={CONF_NAME: "Test"},
-        options={CONF_ENTITIES: entities or []},
+        version=2,
+        data={
+            CONF_PRESET: DEFAULT_PRESET,
+            CONF_OPERATION_MODE: operation_mode,
+            CONF_TRACK_MODE: track_mode,
+            CONF_HOME_ONLY: home_only,
+        },
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -62,7 +82,14 @@ async def test_setup_creates_entities_and_services(hass: HomeAssistant) -> None:
     assert hass.states.get("sensor.test_surprise") is not None
     assert hass.states.get("sensor.test_learning_state") is not None
     assert hass.states.get("binary_sensor.test_anomaly") is not None
-    for service in (SERVICE_EVALUATE, SERVICE_SAVE_BRAIN, SERVICE_RESET_BRAIN):
+    for service in (
+        SERVICE_EVALUATE,
+        SERVICE_SAVE_BRAIN,
+        SERVICE_RESET_BRAIN,
+        SERVICE_SET_MODE,
+        SERVICE_CONFIRM_ACTION,
+        SERVICE_REJECT_ACTION,
+    ):
         assert hass.services.has_service(DOMAIN, service)
 
 
@@ -70,7 +97,14 @@ async def test_unload_removes_services(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    for service in (SERVICE_EVALUATE, SERVICE_SAVE_BRAIN, SERVICE_RESET_BRAIN):
+    for service in (
+        SERVICE_EVALUATE,
+        SERVICE_SAVE_BRAIN,
+        SERVICE_RESET_BRAIN,
+        SERVICE_SET_MODE,
+        SERVICE_CONFIRM_ACTION,
+        SERVICE_REJECT_ACTION,
+    ):
         assert not hass.services.has_service(DOMAIN, service)
     assert DOMAIN not in hass.data
 
@@ -83,7 +117,9 @@ async def test_save_brain_service_writes_file(hass: HomeAssistant) -> None:
 
 
 async def test_reset_brain_service_clears_learning(hass: HomeAssistant) -> None:
-    entry = await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+    hass.states.async_set("binary_sensor.motion_kitchen", "off")
+    await hass.async_block_till_done()
+    entry = await _setup(hass)
 
     # Accumulate a little learning, then snapshot it to disk.
     hass.states.async_set("binary_sensor.motion_kitchen", "on")
@@ -107,7 +143,7 @@ async def test_observed_entity_feeds_engine(hass: HomeAssistant) -> None:
     hass.states.async_set("binary_sensor.motion_kitchen", "off")
     await hass.async_block_till_done()
 
-    entry = await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+    entry = await _setup(hass)
     engine = hass.data[DOMAIN][entry.entry_id]
     before = engine.tick_count
 
@@ -117,22 +153,28 @@ async def test_observed_entity_feeds_engine(hass: HomeAssistant) -> None:
     assert engine.tick_count > before
 
 
-async def test_no_entities_raises_repair_issue(hass: HomeAssistant) -> None:
-    entry = await _setup(hass)
+async def test_no_tracked_entities_raises_repair_issue(hass: HomeAssistant) -> None:
+    """Labeled tracking with no labelled entity tracks nothing → repair issue."""
+    entry = await _setup(hass, track_mode=TRACK_LABELED)
     registry = ir.async_get(hass)
     assert (
         registry.async_get_issue(DOMAIN, f"no_entities_{entry.entry_id}") is not None
     )
 
 
-async def test_selecting_entities_clears_repair_issue(hass: HomeAssistant) -> None:
-    entry = await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+async def test_standard_tracking_clears_repair_issue(hass: HomeAssistant) -> None:
+    """Standard tracking discovers entities → no repair issue."""
+    hass.states.async_set("binary_sensor.motion_kitchen", "off")
+    await hass.async_block_till_done()
+    entry = await _setup(hass, track_mode=TRACK_STANDARD)
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, f"no_entities_{entry.entry_id}") is None
 
 
 async def test_entities_expose_observability_attributes(hass: HomeAssistant) -> None:
-    await _setup(hass, entities=["binary_sensor.motion_kitchen"])
+    hass.states.async_set("binary_sensor.motion_kitchen", "off")
+    await hass.async_block_till_done()
+    await _setup(hass)
     hass.states.async_set("binary_sensor.motion_kitchen", "on")
     await hass.async_block_till_done()
 
@@ -146,3 +188,15 @@ async def test_entities_expose_observability_attributes(hass: HomeAssistant) -> 
 
     learning = hass.states.get("sensor.test_learning_state")
     assert "total_events" in learning.attributes
+
+
+async def test_set_mode_service_changes_operation_mode(hass: HomeAssistant) -> None:
+    entry = await _setup(hass, operation_mode=DEFAULT_OPERATION_MODE)
+    engine = hass.data[DOMAIN][entry.entry_id]
+    assert engine.operation_mode == DEFAULT_OPERATION_MODE
+
+    await hass.services.async_call(
+        DOMAIN, SERVICE_SET_MODE, {"mode": "confirm"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert engine.operation_mode == "confirm"

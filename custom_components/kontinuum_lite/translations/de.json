@@ -3,30 +3,37 @@
     "step": {
       "user": {
         "title": "KONTINUUM Lite",
-        "description": "Minimales, headless neuroinspiriertes Lern-Substrat.",
+        "description": "Wähle einen Lern-Charakter. Betriebsmodus und Entity-Tracking kannst du danach unter Konfigurieren feinjustieren.",
         "data": {
-          "name": "Name",
-          "entities": "Entitäten, von denen gelernt werden soll"
-        },
-        "data_description": {
-          "entities": "Diese Entitäten werden bei jedem Zustandswechsel in die Engine gefüttert. Leer lassen, um nur über den Dienst „Evaluate“ Beobachtungen einzuspeisen."
+          "preset": "Persönlichkeit"
         }
       }
     },
     "abort": {
-      "already_configured": "KONTINUUM Lite ist bereits eingerichtet."
+      "already_configured": "KONTINUUM Lite ist bereits konfiguriert."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "KONTINUUM Lite",
-        "description": "Wähle, welche Entitäten das Lern-Substrat beobachtet.",
+        "menu_options": {
+          "general": "Allgemeine Einstellungen",
+          "finish": "Speichern & neu laden"
+        }
+      },
+      "general": {
+        "title": "Allgemeine Einstellungen",
+        "description": "Persönlichkeit, Betriebsmodus, Tracking und allgemeine Optionen.",
         "data": {
-          "entities": "Entitäten, von denen gelernt werden soll"
+          "preset": "Persönlichkeit",
+          "operation_mode": "Betriebsmodus",
+          "track_mode": "Entity-Tracking-Modus",
+          "home_only_mode": "Home-Only Modus (pausiert wenn niemand zuhause)"
         },
         "data_description": {
-          "entities": "Eine Änderung lädt die Integration neu. Neu hinzugefügte Entitäten tragen sofort bei; entfernte werden nicht mehr beobachtet."
+          "operation_mode": "Shadow beobachtet nur; Confirm fragt vor jeder Aktion (über eine actionable Benachrichtigung); Active handelt selbstständig.",
+          "track_mode": "Standard lernt von allen Entitäten (Opt-out über das Label 'ignore_kontinuum'); Labeled lernt nur von Entitäten mit dem Label 'kontinuum'; Automatic nutzt einen intelligenten Heuristik-Filter."
         }
       }
     }
@@ -54,11 +61,11 @@
   "services": {
     "evaluate": {
       "name": "Auswerten",
-      "description": "Führt einen Engine-Tick aus; feuert kontinuum_lite_anomaly, wenn die Schwelle überschritten wird.",
+      "description": "Führt einen Engine-Tick aus; feuert kontinuum_lite_anomaly beim Überschreiten der Schwelle.",
       "fields": {
         "payload": {
           "name": "Payload",
-          "description": "Optionale Beobachtungs-Payload, die an die Engine weitergereicht wird."
+          "description": "Optionale Beobachtung, die an die Engine weitergereicht wird."
         }
       }
     },
@@ -68,13 +75,47 @@
     },
     "reset_brain": {
       "name": "Gehirn zurücksetzen",
-      "description": "Löscht alles Gelernte und startet kalt neu. Kann nicht rückgängig gemacht werden."
+      "description": "Löscht das gesamte Gelernte und startet kalt neu. Kann nicht rückgängig gemacht werden."
+    },
+    "set_mode": {
+      "name": "Betriebsmodus setzen",
+      "description": "Wechselt zwischen Shadow, Confirm und Active.",
+      "fields": {
+        "mode": {
+          "name": "Modus",
+          "description": "Der Betriebsmodus (shadow, confirm oder active)."
+        }
+      }
+    },
+    "confirm_action": {
+      "name": "Aktion bestätigen",
+      "description": "Bestätigt eine wartende Aktion im Confirm-Modus.",
+      "fields": {
+        "confirm_id": {
+          "name": "Confirm-ID",
+          "description": "Die ID der wartenden Aktion, die bestätigt werden soll."
+        },
+        "confirm_all": {
+          "name": "Alle bestätigen",
+          "description": "Bestätigt alle wartenden Aktionen statt einer einzelnen."
+        }
+      }
+    },
+    "reject_action": {
+      "name": "Aktion ablehnen",
+      "description": "Lehnt eine wartende Aktion im Confirm-Modus ab (negatives Feedback).",
+      "fields": {
+        "confirm_id": {
+          "name": "Confirm-ID",
+          "description": "Die ID der wartenden Aktion, die abgelehnt werden soll."
+        }
+      }
     }
   },
   "issues": {
     "no_entities": {
-      "title": "KONTINUUM Lite hat keine Entitäten zum Lernen",
-      "description": "Es sind keine Entitäten ausgewählt — das Lern-Substrat bleibt im Kaltstart und lernt nichts. Öffne die Optionen der Integration (Einstellungen → Geräte & Dienste → KONTINUUM Lite → Konfigurieren) und wähle die zu beobachtenden Entitäten. Du kannst dies ignorieren, wenn du Beobachtungen bewusst nur über den Dienst „Evaluate“ einspeist."
+      "title": "KONTINUUM Lite trackt keine Entitäten",
+      "description": "Die Engine trackt aktuell keine Entitäten und bleibt daher im Kaltstart, ohne zu lernen. Meist liegt das daran, dass der Tracking-Modus auf 'Labeled' steht, aber keine Entität das Label 'kontinuum' trägt. Öffne Einstellungen → Geräte & Dienste → KONTINUUM Lite → Konfigurieren → Allgemeine Einstellungen und stelle den Tracking-Modus auf 'Standard', oder vergib das Label 'kontinuum' an die gewünschten Entitäten."
     }
   }
 }

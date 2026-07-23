@@ -15,7 +15,16 @@ from typing import Any
 
 from kontinuum_core import KontinuumEngine, Scheduler
 
-from .const import STATE_COLD_START
+from .const import (
+    DEFAULT_OPERATION_MODE,
+    DEFAULT_TRACK_MODE,
+    STATE_COLD_START,
+)
+
+try:  # pragma: no cover - depends on installed core version
+    from kontinuum_core.prefrontal_cortex import Decision
+except Exception:  # noqa: BLE001 - tolerate older cores
+    Decision = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -169,6 +178,187 @@ class LiteEngine:
         """Number of events the hippocampus actually learned from (post-filter)."""
         hippo = getattr(self._core, "hippocampus", None)
         return int(getattr(hippo, "total_events", 0))
+
+    # ---- Configuration: preset / modes ------------------------------
+
+    def apply_preset(self, params: dict[str, Any]) -> None:
+        """Tune learning aggressiveness from a preset (same knobs as Pro).
+
+        Every knob is set defensively so a core that renames/drops one of them
+        degrades to a no-op instead of raising.
+        """
+        cerebellum = getattr(self._core, "cerebellum", None)
+        hippocampus = getattr(self._core, "hippocampus", None)
+        if cerebellum is not None:
+            if "cerebellum_min_obs" in params:
+                cerebellum.MIN_OBSERVATIONS = params["cerebellum_min_obs"]
+            if "cerebellum_min_conf" in params:
+                cerebellum.MIN_CONFIDENCE = params["cerebellum_min_conf"]
+        if hippocampus is not None:
+            if "hippocampus_decay" in params:
+                hippocampus.DECAY_RATE = params["hippocampus_decay"]
+            if "hippocampus_min_obs" in params:
+                hippocampus.MIN_OBSERVATIONS = params["hippocampus_min_obs"]
+
+    def set_operation_mode(self, mode: str) -> bool:
+        """Set shadow/confirm/active on the core prefrontal cortex."""
+        pfc = self.prefrontal
+        setter = getattr(pfc, "set_operation_mode", None) if pfc else None
+        if callable(setter):
+            return bool(setter(mode))
+        return False
+
+    @property
+    def operation_mode(self) -> str:
+        pfc = self.prefrontal
+        return getattr(pfc, "operation_mode", DEFAULT_OPERATION_MODE)
+
+    def set_track_mode(self, mode: str) -> None:
+        """Set which entities the thalamus keeps (standard/labeled/auto)."""
+        thalamus = self.thalamus
+        if thalamus is not None:
+            thalamus.track_mode = mode
+
+    @property
+    def track_mode(self) -> str:
+        thalamus = self.thalamus
+        return getattr(thalamus, "track_mode", DEFAULT_TRACK_MODE)
+
+    # ---- Decision / action surface ----------------------------------
+
+    @property
+    def prefrontal(self):
+        """Core prefrontal cortex (decision instance), or ``None``."""
+        return getattr(self._core, "prefrontal_cortex", None)
+
+    @property
+    def thalamus(self):
+        """Core thalamus (entity registry / tracking), or ``None``."""
+        return getattr(self._core, "thalamus", None)
+
+    @property
+    def last_decision(self) -> dict[str, Any] | None:
+        """The advisory decision the core computed on the last observation.
+
+        Shape: ``{"token", "entity_id", "stage", "confidence", "utility",
+        "risk", "source", "n_obs", "reasons"}`` — see kontinuum-core's
+        ``_build_extra``. ``None`` when the core produced no decision.
+        """
+        dec = self._snapshot.extra.get("decision")
+        return dec if isinstance(dec, dict) else None
+
+    def _decision_obj(self, decision: dict[str, Any]):
+        """Rebuild a core ``Decision`` from the snapshot dict.
+
+        The engine only surfaces the decision as a dict; the core's
+        ``get_service_call`` / ``queue_confirm`` want the object. token_id is
+        not surfaced (only used for confirm-id uniqueness and best-effort
+        reinforcement), so it stays 0.
+        """
+        if Decision is None:
+            return None
+        obj = Decision()
+        obj.token = decision.get("token", "")
+        obj.entity_id = decision.get("entity_id", "")
+        obj.confidence = decision.get("confidence", 0.0)
+        obj.utility = decision.get("utility", 0.0)
+        obj.risk = decision.get("risk", 0.0)
+        obj.n_obs = decision.get("n_obs", 0)
+        obj.source = decision.get("source", "")
+        obj.reasons = list(decision.get("reasons", []) or [])
+        obj.stage = decision.get("stage", "")
+        return obj
+
+    def service_call_for(self, decision: dict[str, Any]) -> dict[str, Any] | None:
+        """Translate a decision into a HA service call spec, or ``None``.
+
+        Returns ``{"domain", "service", "entity_id", "data"}`` exactly like the
+        core's ``PrefrontalCortex.get_service_call``.
+        """
+        pfc = self.prefrontal
+        obj = self._decision_obj(decision)
+        if pfc is None or obj is None:
+            return None
+        getter = getattr(pfc, "get_service_call", None)
+        return getter(obj) if callable(getter) else None
+
+    def queue_confirm(
+        self, decision: dict[str, Any], reasoning: str = "", context: dict | None = None
+    ) -> str | None:
+        """Park an actionable decision awaiting human confirmation.
+
+        Returns the confirm_id, or ``None`` if the core can't queue.
+        """
+        pfc = self.prefrontal
+        obj = self._decision_obj(decision)
+        queue = getattr(pfc, "queue_confirm", None) if pfc else None
+        if not callable(queue) or obj is None:
+            return None
+        return queue(obj, reasoning=reasoning, context=context or {})
+
+    def take_pending(self, confirm_id: str):
+        """Pop a pending confirmation, returning its ``Decision`` or ``None``."""
+        pfc = self.prefrontal
+        getter = getattr(pfc, "get_pending_confirm", None) if pfc else None
+        return getter(confirm_id) if callable(getter) else None
+
+    def reject_pending(self, confirm_id: str) -> dict[str, Any] | None:
+        """Reject a pending confirmation and feed back negative reinforcement."""
+        pfc = self.prefrontal
+        rej = getattr(pfc, "reject_pending", None) if pfc else None
+        if not callable(rej):
+            return None
+        return rej(
+            confirm_id,
+            basal_ganglia=getattr(self._core, "basal_ganglia", None),
+            amygdala=getattr(self._core, "amygdala", None),
+        )
+
+    def pending_confirms(self) -> list[dict[str, Any]]:
+        """List all pending confirmations (rich dicts) for a status sensor."""
+        pfc = self.prefrontal
+        getter = getattr(pfc, "get_all_pending_confirms", None) if pfc else None
+        return getter() if callable(getter) else []
+
+    def get_service_call_obj(self, decision_obj) -> dict[str, Any] | None:
+        """Service-call spec for an already-materialised ``Decision`` object."""
+        pfc = self.prefrontal
+        getter = getattr(pfc, "get_service_call", None) if pfc else None
+        return getter(decision_obj) if callable(getter) and decision_obj else None
+
+    # ---- Feedback / own-action bookkeeping --------------------------
+
+    def mark_own_action(self, entity_id: str, token: str = "", semantic: str = "") -> None:
+        pfc = self.prefrontal
+        marker = getattr(pfc, "mark_own_action", None) if pfc else None
+        if callable(marker):
+            marker(entity_id, token=token, semantic=semantic)
+
+    def is_own_action(self, entity_id: str) -> bool:
+        pfc = self.prefrontal
+        checker = getattr(pfc, "is_own_action", None) if pfc else None
+        return bool(checker(entity_id)) if callable(checker) else False
+
+    def check_override(self, entity_id: str, new_state: str) -> bool:
+        """Detect a quick manual undo of one of our actions (neg. feedback)."""
+        pfc = self.prefrontal
+        checker = getattr(pfc, "check_override", None) if pfc else None
+        if not callable(checker):
+            return False
+        return bool(checker(entity_id, new_state, getattr(self._core, "amygdala", None)))
+
+    def entity_semantic(self, entity_id: str) -> str | None:
+        """The semantic the thalamus assigned to an entity, if tracked."""
+        thalamus = self.thalamus
+        mapping = getattr(thalamus, "entity_semantic", None) if thalamus else None
+        return mapping.get(entity_id) if isinstance(mapping, dict) else None
+
+    @property
+    def tracked_count(self) -> int:
+        """How many entities the thalamus is actually tracking."""
+        thalamus = self.thalamus
+        mapping = getattr(thalamus, "entity_semantic", None) if thalamus else None
+        return len(mapping) if isinstance(mapping, dict) else 0
 
     @property
     def core(self) -> KontinuumEngine:
