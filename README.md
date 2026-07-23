@@ -1,5 +1,13 @@
 # KONTINUUM Lite
 
+[![Tests](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/tests.yaml/badge.svg)](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/tests.yaml)
+[![Validate with hassfest](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/hassfest.yaml)
+[![HACS Validate](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/validate.yaml/badge.svg)](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/validate.yaml)
+[![HACS: Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-41BDF5.svg?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
+[![kontinuum-core](https://img.shields.io/badge/kontinuum--core-%E2%89%A50.6.3-4c1.svg)](https://github.com/Chance-Konstruktion/kontinuum-core)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+
 > Headless, lightweight variant of [KONTINUUM](https://github.com/Chance-Konstruktion/ha-kontinuum) — no UI, no brand assets, just the learning substrate.
 
 > **Teil der 3-Repo-Familie:**
@@ -103,7 +111,7 @@ nützlich, wenn das Modell „verdorben" ist und neu anlernen soll.
 
 **Phase 1+** — die Engine delegiert vollständig an
 [`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core)
-(via `requirements: ["kontinuum-core>=0.6.0,<0.7"]` im manifest):
+(via `requirements: ["kontinuum-core>=0.6.3,<0.7"]` im manifest):
 - **Automatische Daten-Ingestion**: ausgewählte Entities werden registriert
   (mit Area/Metadaten) und ihre Zustandswechsel live in die Engine gefüttert
 - Echte Lern-Pipeline (Thalamus → Hippocampus → Predictive Processing → …)
