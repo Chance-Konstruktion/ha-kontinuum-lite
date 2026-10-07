@@ -1,0 +1,38 @@
+# KONTINUUM Lite: die Standard-Vorlage der Home-Assistant-Repos, eingebunden
+# ueber ihr Etikett -- pytest (mit pytest-homeassistant-custom-component aus
+# requirements_test.txt), hassfest, HACS-Angaben und die Geheimnis-Suche.
+include:
+  - project: 'claude/ci-vorlagen'
+    file: '/vorlagen/standard.yml'
+    ref: 'standard-v1'
+
+# Lite ist privat und geht nicht nach GitHub: Ein Release dort waere eine
+# Veroeffentlichung. Der Vorlagen-Job bleibt hier deshalb ganz aus, auch
+# wenn eines Tages ein GITHUB_TOKEN in der Gruppe liegt.
+github-release:
+  rules:
+    - when: never
+
+# ── Vorschau auf einen kommenden Kern ─────────────────────────────────
+# Die Manifest-Regel erlaubt nur veroeffentlichte Kerne, und die Tests fuer
+# das, was ein neuer Kern mitbringt, ueberspringen sich bis dahin mit Grund.
+# Pruefen laesst es sich trotzdem VOR dem Release: Pipeline von Hand starten
+# (Build -> Pipelines -> Run pipeline, oder per API) mit der Variable
+#   KERN_VORSCHAU = git+https://gitlab.schanz.ipv64.net/chance-konstruktion/kontinuum-core.git@main
+# (oder @<Zweig>). Dann laeuft die ganze Suite gegen genau diesen Kern.
+kern-vorschau:
+  extends: pytest
+  script:
+    - pip install -q "$KERN_VORSCHAU"
+    - pip freeze > installierte-pakete.txt
+    - grep -i kontinuum installierte-pakete.txt
+    - python -m pytest -q -rs --junitxml=report-kern-vorschau.xml
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - installierte-pakete.txt
+    reports:
+      junit: report-kern-vorschau.xml
+  rules:
+    - if: $KERN_VORSCHAU

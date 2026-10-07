@@ -50,6 +50,9 @@
           "learning": "Lernt",
           "stable": "Stabil"
         }
+      },
+      "situation": {
+        "name": "Lagebild"
       }
     },
     "binary_sensor": {

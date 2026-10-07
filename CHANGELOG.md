@@ -8,6 +8,29 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## Unreleased
 
 ### Added
+- **Stufe 3 from `kontinuum-core` 0.7: Lagebild and Börse** (lead ticket
+  kontinuum-core#2). Active as soon as the installed core has them; with an
+  older core nothing changes. The manifest rule stays `>=0.6.3,<0.7` until
+  0.7.0 is released, then a small bump to `>=0.7.0,<0.8` switches it on.
+  - **Presence per person** — `sensor.<entry>_presence_<person>` (0–100 %):
+    inferred from the devices alone; the person's own trackers (`person`
+    attribute `device_trackers`) are the label, never evidence, so the sensor
+    is a second opinion next to the phone. Attributes: strongest evidence,
+    what the trackers report, and the online hit rate (checked with
+    knowledge at least a day old). Appears once the Lagebild has learned the
+    person (after the first day).
+  - **`sensor.<entry>_situation`** — how many persons the Lagebild holds home,
+    plus the pair table's strongest associations ("if A, then B"). Presence
+    is re-read at most once a minute, the associations (they read the whole
+    table) once an hour — on a Pi that is a quarter second, not every event.
+  - **Learning state** attributes `next_event` / `next_event_probability` (the
+    engine's first guess for the next event) and `hit_rate` (how often the
+    Börse's first guess was right so far).
+  - Diagnostics report the Lagebild and Börse — persons numbered, not named.
+- **GitLab CI** (`.gitlab-ci.yml`): the standard template (pytest with the
+  Home Assistant test harness, hassfest, HACS metadata, secret scan); the
+  GitHub release job stays off (Lite is private). A pipeline run with
+  `KERN_VORSCHAU` tests against an unreleased core.
 - **Pro-parity config & options flow (no more manual per-entity picking).**
   Lite now mirrors the Pro integration as closely as possible so switching
   Lite → Pro feels familiar. The initial flow asks for a **preset**
@@ -32,6 +55,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **New events**: `kontinuum_lite_action_executed`, `kontinuum_lite_confirm_rejected`.
 
 ### Changed
+- **Local time for the core.** Home Assistant's timestamps are UTC, and the
+  core reads hour and weekday straight off the timestamp — every time-of-day
+  pattern sat one or two hours late (CET/CEST), and Saturday began at 1 or
+  2 am. Events now reach the core in Home Assistant's local time. A brain
+  learned before shifts its hour patterns once and relearns them.
+- **Home-Only pauses learning, not the Lagebild.** While nobody is home the
+  event learners still pause (as in Pro), but every change keeps reaching the
+  Lagebild — the empty house is exactly what it learns "away" from. The echo
+  of our own actions likewise reaches the Lagebild (the device *is* in that
+  state now), just not the learners.
+- **Heartbeat on the event loop.** The 5-minute heartbeat advances the
+  Lagebild on the loop, where every state change touches it too, and only
+  then hands the idle-consolidation check to the executor as before. The
+  core's tick there finds the Lagebild current instead of moving it in a
+  second thread while an event arrives.
+- **Startup seed in time order**, oldest state first, so the brain's clock
+  only moves forward; states the thalamus doesn't track (persons above all)
+  go to the Lagebild only.
 - **Global state-change ingestion.** Instead of subscribing to a hand-picked
   entity list, Lite now discovers all entities (with area + labels) and
   subscribes to every state change; the core thalamus does the filtering via
@@ -39,6 +80,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   old manual entity list is superseded by `track_mode='standard'`.
 
 ### Fixed
+- **Sensors no longer flicker on filtered changes.** With standard tracking
+  most state changes are filtered by the core (no room, unregistered,
+  repeats, bursts), and each one reset the surprise sensor to 0 and the
+  anomaly to off until the next real event. A filtered observation now keeps
+  the last real reading; only the counters move. Its decision is not kept, so
+  nothing is executed twice.
+- **Our own sensors are never registered as input.** After a restart they sit
+  in the entity registry, and discovery handed them to the thalamus like any
+  entity. With the Lite device in an area they were tracked, and the startup
+  seed fed their states back into the brain; without one, the anomaly sensor
+  still carried a semantic the Lagebild would have accepted.
 - **Sleep consolidation now runs during idle.** Consolidation is only eligible
   during a quiet spell (≥30 min since the last event), but it was only ever
   *checked* on a state change — never during the downtime it needs — so an idle

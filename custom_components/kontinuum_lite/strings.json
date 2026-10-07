@@ -50,6 +50,9 @@
           "learning": "Learning",
           "stable": "Stable"
         }
+      },
+      "situation": {
+        "name": "Situation"
       }
     },
     "binary_sensor": {

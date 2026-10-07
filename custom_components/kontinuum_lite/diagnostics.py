@@ -64,8 +64,36 @@ async def async_get_config_entry_diagnostics(
             "anomaly_threshold": snap.anomaly_threshold,
             "token": snap.token,
             "expected_next_room": snap.expected_next_room,
+            "next_event": snap.next_event,
+            # Stufe 3 (kontinuum-core >= 0.7): False/None on older cores.
+            "supports_lagebild": engine.supports_lagebild,
+            "boerse": engine.boerse,
+            "lagebild": _lagebild_summary(engine),
         }
     else:
         data["engine"] = None
 
     return data
+
+
+def _lagebild_summary(engine: LiteEngine) -> dict[str, Any]:
+    """How far the Lagebild got — without naming anyone.
+
+    Diagnostics end up in bug reports, so persons are numbered instead of
+    listed by entity_id, and the evidence (which device says what) stays out.
+    """
+    data = engine.lagebild_data
+    learning = dict(data.get("learning") or {})
+    learning["targets"] = len(learning.get("targets") or [])
+    return {
+        "learning": learning,
+        "presence": [
+            {
+                "home": reading.get("home"),
+                "checked": reading.get("checked"),
+                "hit_rate": reading.get("hit_rate"),
+            }
+            for _target, reading in sorted((data.get("presence") or {}).items())
+        ],
+        "associations": len(data.get("associations") or []),
+    }

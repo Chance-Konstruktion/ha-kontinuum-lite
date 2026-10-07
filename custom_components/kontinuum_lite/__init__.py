@@ -12,6 +12,7 @@ import gzip
 import json
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -28,6 +29,8 @@ from homeassistant.helpers import (
     issue_registry as ir,
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ACTION_CONFIRM_PREFIX,
@@ -45,6 +48,8 @@ from .const import (
     EVENT_ACTION_EXECUTED,
     EVENT_ANOMALY,
     EVENT_CONFIRM_REJECTED,
+    LAGEBILD_ASSOCIATIONS_SECONDS,
+    LAGEBILD_REFRESH_SECONDS,
     MODE_CONFIRM,
     NOTIFY_TAG_PREFIX,
     PRESETS,
@@ -55,6 +60,7 @@ from .const import (
     SERVICE_RESET_BRAIN,
     SERVICE_SAVE_BRAIN,
     SERVICE_SET_MODE,
+    SIGNAL_LAGEBILD,
     SIGNAL_UPDATE,
     STORAGE_DIR,
     VALID_MODES,
@@ -189,6 +195,10 @@ def _discover_and_register(hass: HomeAssistant, engine: LiteEngine) -> int:
     for entry in ent_reg.entities.values():
         entity_id = entry.entity_id
         seen.add(entity_id)
+        if entry.platform == DOMAIN:
+            # Our own sensors are output, never input: learning them would
+            # feed the brain its own echo (and the Lagebild its own guess).
+            continue
         meta: dict[str, Any] = {"domain": entity_id.split(".")[0]}
 
         area_id = entry.area_id
@@ -241,6 +251,56 @@ def _anyone_home(hass: HomeAssistant) -> bool:
     if not persons:
         return True
     return any(state.state == "home" for state in persons)
+
+
+# ── Lagebild helpers (kontinuum-core >= 0.7) ──────────────────────────
+
+
+@callback
+def _is_own(hass: HomeAssistant, entity_id: str) -> bool:
+    """One of our own entities? Matched on the registry platform, because our
+    entity_ids depend on the entry title."""
+    own = er.async_get(hass).async_get(entity_id)
+    return own is not None and own.platform == DOMAIN
+
+
+@callback
+def _person_trackers(hass: HomeAssistant) -> set[str]:
+    """The trackers that belong to a person (``device_trackers`` attribute)."""
+    trackers: set[str] = set()
+    for state in hass.states.async_all("person"):
+        for tracker in state.attributes.get("device_trackers") or ():
+            if isinstance(tracker, str):
+                trackers.add(tracker)
+    return trackers
+
+
+def _local(moment: datetime) -> datetime:
+    """HA timestamps are UTC; the core reads hour and weekday straight off the
+    timestamp. In local time, "evening" is the evening and Saturday starts at
+    midnight here, not one or two hours later."""
+    return dt_util.as_local(moment)
+
+
+@callback
+def _report_lagebild(
+    hass: HomeAssistant,
+    engine: LiteEngine,
+    now: datetime | None = None,
+    associations: bool = False,
+) -> None:
+    """Re-read the Lagebild and hand it to the sensors."""
+    if not engine.supports_lagebild:
+        return
+    data = engine.lagebild(now=now, associations=associations)
+    async_dispatcher_send(hass, SIGNAL_LAGEBILD, data)
+
+
+@callback
+def _maybe_report_lagebild(hass: HomeAssistant, engine: LiteEngine) -> None:
+    """From the event path: presence at most every ``LAGEBILD_REFRESH_SECONDS``."""
+    if engine.supports_lagebild and engine.lagebild_age >= LAGEBILD_REFRESH_SECONDS:
+        _report_lagebild(hass, engine)
 
 
 # ── Observation + action pipeline ──────────────────────────────────────
@@ -431,37 +491,45 @@ def _make_state_listener(hass: HomeAssistant, engine: LiteEngine, entry: ConfigE
         # writes the surprise/anomaly sensors, whose state change would be
         # re-observed, looping forever. Our sensor entity_ids depend on the
         # entry title, so match on the registry platform, not a name prefix.
-        own = er.async_get(hass).async_get(entity_id)
-        if own is not None and own.platform == DOMAIN:
+        if _is_own(hass, entity_id):
             return
 
         # Ignore no-op state repeats.
         if old_state is not None and old_state.state == new_state.state:
             return
 
-        # Home-only: pause entirely while nobody is home (mirrors Pro).
+        timestamp = _local(new_state.last_updated)
+        if entity_id.startswith("person."):
+            # Whose tracker is whose may change with the person's config.
+            engine.set_person_trackers(_person_trackers(hass))
+
         cfg = _config(entry)
         if cfg.get(CONF_HOME_ONLY, False) and not _anyone_home(hass):
-            return
+            # Home-only: learning pauses while nobody is home (mirrors Pro).
+            # The Lagebild does not — the empty house is exactly what it
+            # learns "away" from.
+            engine.feed_lagebild(entity_id, new_state.state, timestamp)
+        elif engine.is_own_action(entity_id):
+            # The echo of our own action (~10 s window) is no event to learn
+            # from, but the device IS in that state now.
+            engine.feed_lagebild(entity_id, new_state.state, timestamp)
+        else:
+            # Quick manual undo of one of our actions → negative feedback.
+            if engine.check_override(entity_id, new_state.state):
+                _LOGGER.debug("KONTINUUM Lite: override on %s", entity_id)
 
-        # Suppress the echo of our own actions (~10 s window).
-        if engine.is_own_action(entity_id):
-            return
+            _ingest(
+                hass,
+                engine,
+                {
+                    "entity_id": entity_id,
+                    "new_state": new_state.state,
+                    "old_state": old_state.state if old_state else None,
+                    "timestamp": timestamp,
+                },
+            )
 
-        # Quick manual undo of one of our actions → negative feedback.
-        if engine.check_override(entity_id, new_state.state):
-            _LOGGER.debug("KONTINUUM Lite: override on %s", entity_id)
-
-        _ingest(
-            hass,
-            engine,
-            {
-                "entity_id": entity_id,
-                "new_state": new_state.state,
-                "old_state": old_state.state if old_state else None,
-                "timestamp": new_state.last_updated,
-            },
-        )
+        _maybe_report_lagebild(hass, engine)
 
     return _on_state_change
 
@@ -486,6 +554,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         engine.core.metaplasticity.start(interval_hours=24)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("MetaPlasticity bootstrap failed; continuing without it")
+
+    # Presence targets before the restore: the core keeps only the targets
+    # its predicate accepts (persons and the trackers that belong to them).
+    engine.set_person_trackers(_person_trackers(hass))
 
     # Restore the learned brain so learning survives restarts.
     brain_path = _brain_path(storage_path)
@@ -522,8 +594,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("KONTINUUM Lite: thalamus tracking %d entities", tracked)
 
     # Seed from current state so learning starts now, not on the next change.
-    for state in hass.states.async_all():
+    # Oldest first, so the brain's clock only moves forward.
+    for state in sorted(hass.states.async_all(), key=lambda s: s.last_updated):
+        if _is_own(hass, state.entity_id):
+            continue
+        timestamp = _local(state.last_updated)
         if engine.entity_semantic(state.entity_id) is None:
+            # No event for the learners, but part of the situation — persons
+            # and their trackers above all: the Lagebild only.
+            engine.feed_lagebild(state.entity_id, state.state, timestamp)
             continue
         _ingest(
             hass,
@@ -532,7 +611,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "entity_id": state.entity_id,
                 "new_state": state.state,
                 "old_state": None,
-                "timestamp": state.last_updated,
+                "timestamp": timestamp,
             },
         )
 
@@ -577,13 +656,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     scheduler.schedule_interval(_maybe_save_brain, SAVE_INTERVAL_SECONDS)
 
-    # ── Idle heartbeat for sleep consolidation ──────────────────────
+    # ── Heartbeat: Lagebild on the loop, idle consolidation off it ──
+    # The Lagebild's clock advances here on the event loop, where every
+    # state change touches it too. The core's tick() in the executor then
+    # finds it current and only checks for idle sleep consolidation.
     def _idle_consolidate() -> None:
         stats = engine.tick()
         if stats:
             _LOGGER.info("KONTINUUM Lite: idle sleep consolidation ran: %s", stats)
 
-    scheduler.schedule_interval(_idle_consolidate, CONSOLIDATION_INTERVAL_SECONDS)
+    async def _idle_tick() -> None:
+        try:
+            await hass.async_add_executor_job(_idle_consolidate)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("KONTINUUM Lite: idle heartbeat failed")
+
+    @callback
+    def _heartbeat(now: datetime) -> None:
+        if engine.supports_lagebild:
+            engine.set_person_trackers(_person_trackers(hass))
+            _report_lagebild(
+                hass,
+                engine,
+                now=_local(now),
+                associations=engine.associations_age >= LAGEBILD_ASSOCIATIONS_SECONDS,
+            )
+        hass.async_create_task(_idle_tick())
+
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass, _heartbeat, timedelta(seconds=CONSOLIDATION_INTERVAL_SECONDS)
+        )
+    )
+
+    # First Lagebild reading, so restored presence shows up right away.
+    if engine.supports_lagebild:
+        engine.lagebild(now=_local(dt_util.utcnow()))
 
     # Reload when options change.
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))

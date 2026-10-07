@@ -90,6 +90,9 @@ NOTIFY_TAG_PREFIX: Final = "kontinuum_lite_confirm_"
 ENTITY_SURPRISE: Final = "surprise"
 ENTITY_ANOMALY: Final = "anomaly"
 ENTITY_LEARNING_STATE: Final = "learning_state"
+# Stufe 3 (kontinuum-core >= 0.7): the Lagebild and one presence sensor per person
+ENTITY_SITUATION: Final = "situation"
+ENTITY_PRESENCE: Final = "presence"
 
 # Learning-state literals
 STATE_COLD_START: Final = "cold_start"
@@ -103,6 +106,7 @@ ANOMALY_THRESHOLD: Final = 0.75
 
 # Signal names for intra-integration dispatch
 SIGNAL_UPDATE: Final = f"{DOMAIN}_update"
+SIGNAL_LAGEBILD: Final = f"{DOMAIN}_lagebild"
 
 # Sub-directory under hass.config for persistent state
 STORAGE_DIR: Final = "kontinuum_lite"
@@ -117,3 +121,9 @@ SAVE_INTERVAL_SECONDS: Final = 600  # snapshot the learned brain every 10 min
 # fire during genuine downtime (needs kontinuum-core >= 0.6.2). Cheap and a
 # no-op unless a quiet spell is due, so a short interval is safe.
 CONSOLIDATION_INTERVAL_SECONDS: Final = 300  # check for idle consolidation every 5 min
+# Lagebild (kontinuum-core >= 0.7): presence is re-read on state changes at
+# most this often, and by the heartbeat above. The pair table's associations
+# read the whole table (quadratic in the features: ~16 ms on a PC, a quarter
+# second on a Pi-class ARM), so the heartbeat recomputes them only hourly.
+LAGEBILD_REFRESH_SECONDS: Final = 60
+LAGEBILD_ASSOCIATIONS_SECONDS: Final = 3600
