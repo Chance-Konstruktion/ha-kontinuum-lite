@@ -5,13 +5,12 @@ All notable changes to **KONTINUUM Lite** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.7.0 (2026-10-07)
 
 ### Added
 - **Stufe 3 from `kontinuum-core` 0.7: Lagebild and Börse** (lead ticket
-  kontinuum-core#2). Active as soon as the installed core has them; with an
-  older core nothing changes. The manifest rule stays `>=0.6.3,<0.7` until
-  0.7.0 is released, then a small bump to `>=0.7.0,<0.8` switches it on.
+  kontinuum-core#2). The manifest rule is now `>=0.7.0,<0.8`;
+  kontinuum-core 0.7.0 is on PyPI, so Stufe 3 is active.
   - **Presence per person** — `sensor.<entry>_presence_<person>` (0–100 %):
     inferred from the devices alone; the person's own trackers (`person`
     attribute `device_trackers`) are the label, never evidence, so the sensor
