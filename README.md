@@ -5,7 +5,7 @@
 [![HACS Validate](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/validate.yaml/badge.svg)](https://github.com/Chance-Konstruktion/ha-kontinuum-lite/actions/workflows/validate.yaml)
 [![HACS: Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-41BDF5.svg?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
-[![kontinuum-core](https://img.shields.io/badge/kontinuum--core-%E2%89%A50.6.3-4c1.svg)](https://github.com/Chance-Konstruktion/kontinuum-core)
+[![kontinuum-core](https://img.shields.io/badge/kontinuum--core-%E2%89%A50.7.0-4c1.svg)](https://github.com/Chance-Konstruktion/kontinuum-core)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
 > Headless, lightweight variant of [KONTINUUM](https://github.com/Chance-Konstruktion/ha-kontinuum) — no UI, no brand assets, just the learning substrate.
@@ -118,8 +118,8 @@ bekommen gelernte Gerätestufen (3 W Standby ist nicht 100 W Betrieb), und alle
   Zusammenhänge der Paar-Tafel (quadratisch) nur stündlich; die großen
   Attribute gehen nicht in den Recorder.
 
-Mit einem älteren Kern gibt es diese Sensoren nicht, und alles läuft wie
-bisher. Die Manifest-Regel erlaubt 0.7 erst nach dessen Release.
+Diese Sensoren verlangen `kontinuum-core` 0.7; die Manifest-Regel steht seit
+Lite 0.7.0 auf `>=0.7.0,<0.8`.
 
 ## Services
 
@@ -180,7 +180,7 @@ nützlich, wenn das Modell „verdorben" ist und neu anlernen soll.
 
 **Phase 1+** — die Engine delegiert vollständig an
 [`kontinuum-core`](https://github.com/Chance-Konstruktion/kontinuum-core)
-(via `requirements: ["kontinuum-core>=0.6.3,<0.7"]` im manifest):
+(via `requirements: ["kontinuum-core>=0.7.0,<0.8"]` im manifest):
 - **Automatische Daten-Ingestion**: ausgewählte Entities werden registriert
   (mit Area/Metadaten) und ihre Zustandswechsel live in die Engine gefüttert
 - Echte Lern-Pipeline (Thalamus → Hippocampus → Predictive Processing → …)
