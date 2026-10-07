@@ -31,13 +31,19 @@ Ideal für:
 | Entität | Typ | Werte | Attribute |
 |---|---|---|---|
 | `sensor.kontinuum_lite_surprise` | numerisch | `0.0` … `1.0` | `anomaly_threshold`, `token` |
-| `sensor.kontinuum_lite_learning_state` | kategorisch | `cold_start` / `learning` / `stable` | `tick`, `total_events` |
+| `sensor.kontinuum_lite_learning_state` | kategorisch | `cold_start` / `learning` / `stable` | `tick`, `total_events`, `next_event`, `next_event_probability`, `hit_rate` |
 | `binary_sensor.kontinuum_lite_anomaly` | on/off | device_class `problem` | `surprise`, `threshold`, `expected_next_room` |
+| `sensor.kontinuum_lite_situation` | numerisch | Personen, die das Lagebild für daheim hält | `presence`, `associations`, `learning` |
+| `sensor.kontinuum_lite_presence_<person>` | numerisch | `0` … `100` % | `most_likely`, `reported`, `evidence`, `time_of_day`, `ticks`, `checked`, `hit_rate` |
+
+Die letzten beiden gibt es ab `kontinuum-core` 0.7 (siehe [Lagebild](#lagebild-ab-kontinuum-core-07)).
 
 > Die **adaptive Anomalie-Schwelle** (`threshold` / `anomaly_threshold`) macht
 > sichtbar, ab welchem Surprise-Wert geflaggt wird — praktisch fürs Tuning von
 > Automatisierungen. `token` ist das aktuelle `raum.semantik.zustand`-Symbol,
-> über das die Engine gerade „nachdenkt".
+> über das die Engine gerade „nachdenkt". `next_event` ist ihr erster Tipp für
+> das nächste Ereignis; `hit_rate` sagt, wie oft dieser erste Tipp bisher
+> stimmte (ab 0.7, sonst leer).
 
 > **Hinweis:** Trackt die Engine (z. B. im `labeled`-Modus ohne passende
 > Labels) keine Entities, lernt sie nichts und meldet das als **Reparatur**
@@ -63,7 +69,8 @@ Einstellungen**:
   `kontinuum`) oder `auto` (intelligenter Heuristik-Filter). **Standardmäßig
   sieht die Engine also alles** — kein manuelles Auswählen einzelner Entities
   mehr nötig.
-- **Home-Only Modus** — pausiert, wenn niemand zuhause ist.
+- **Home-Only Modus** — pausiert das Lernen, wenn niemand zuhause ist (das
+  Lagebild läuft weiter, siehe unten).
 
 Die Integration entdeckt alle Entities automatisch (mit Area + Labels aus den
 HA-Registries) und abonniert jeden Zustandswechsel; der Core-Thalamus filtert
@@ -80,6 +87,39 @@ und fragt per **actionable Notification** (Buttons **Bestätigen** / **Ablehnen*
 nach; ohne Companion-App gehen auch die Services `kontinuum_lite.confirm_action`
 / `reject_action` (mit `confirm_id`). Machst du eine KONTINUUM-Aktion innerhalb
 von 60 s manuell rückgängig, lernt die Engine daraus (negatives Feedback).
+
+## Lagebild (ab kontinuum-core 0.7)
+
+Mit `kontinuum-core` 0.7 hört die Engine nicht mehr nur Einzelereignisse,
+sondern sieht die **ganze Lage**: alle Gerätezustände zusammen und wie lange
+schon. `unavailable` heißt dabei „weg“ — die Reifendrucksensoren eines Autos
+melden sich ab, wenn es wegfährt, und genau das ist ein Hinweis. Leistungen
+bekommen gelernte Gerätestufen (3 W Standby ist nicht 100 W Betrieb), und alle
+5 Minuten wird eine Paar-Tafel „wenn A, dann B“ fortgeschrieben.
+
+- **Anwesenheit je Person** (`sensor.kontinuum_lite_presence_<person>`): wie
+  wahrscheinlich die Person daheim ist, **allein aus den Geräten** geschlossen.
+  Ihre eigenen Tracker (Attribut `device_trackers` der `person`-Entität) sind
+  das Etikett, nie ein Indiz — der Sensor ist eine zweite Meinung: Schweigt
+  das Handy, ist er die einzige; liegt das Handy im Büro, widerspricht er ihm.
+  `evidence` nennt die stärksten Belege, `hit_rate` wie oft der Schluss bisher
+  zum Tracker passte (ehrlich geprüft: mit Wissen, das mindestens einen Tag
+  alt ist). Der Sensor erscheint nach dem ersten Tag.
+- **`sensor.kontinuum_lite_situation`** zählt die Personen, die das Lagebild
+  für daheim hält, und trägt die stärksten Zusammenhänge der Paar-Tafel.
+- Die **Vorhersage** des nächsten Ereignisses kommt aus der „Börse“ des Kerns,
+  die alle Vorhersager nach ihrer echten Trefferquote mischt (gemessen auf
+  fünf öffentlichen CASAS-Häusern: +9 bis +14 Punkte Top-1 über der besten
+  einfachen Regel). Im `active`/`confirm`-Modus handelt die Engine auf dieser
+  Grundlage.
+- **Home-Only:** Das Lernen pausiert, das Lagebild nicht — das leere Haus ist
+  genau das, woraus es „weg“ lernt.
+- **Raspberry Pi:** Die Anwesenheit wird höchstens minütlich neu gelesen, die
+  Zusammenhänge der Paar-Tafel (quadratisch) nur stündlich; die großen
+  Attribute gehen nicht in den Recorder.
+
+Mit einem älteren Kern gibt es diese Sensoren nicht, und alles läuft wie
+bisher. Die Manifest-Regel erlaubt 0.7 erst nach dessen Release.
 
 ## Services
 

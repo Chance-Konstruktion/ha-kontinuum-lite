@@ -10,7 +10,9 @@ to work.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from kontinuum_core import KontinuumEngine, Scheduler
@@ -26,6 +28,16 @@ try:  # pragma: no cover - depends on installed core version
 except Exception:  # noqa: BLE001 - tolerate older cores
     Decision = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - depends on installed core version
+    # kontinuum-core >= 0.7.0 (Stufe 3): the Lagebild's host-neutral entry
+    # point — reads a state the way the thalamus reads it.
+    from kontinuum_core.association_cortex import lage_setzen
+except Exception:  # noqa: BLE001 - cores < 0.7 have no Lagebild
+    lage_setzen = None  # type: ignore[assignment]
+
+# How many of the pair table's strongest associations the Lagebild surfaces.
+LAGEBILD_ASSOCIATIONS = 10
+
 
 @dataclass
 class EngineSnapshot:
@@ -37,6 +49,10 @@ class EngineSnapshot:
     tick_count: int = 0
     token: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # The engine's first guess for the next event (decoded token) and its
+    # probability. From kontinuum-core 0.7 on, it comes from the Börse.
+    next_event: str | None = None
+    next_event_probability: float | None = None
 
     @property
     def anomaly_threshold(self) -> float | None:
@@ -69,6 +85,20 @@ class LiteEngine:
             storage_path=storage_path,
         )
         self._snapshot = EngineSnapshot()
+        # Stufe 3: targets of the presence inference are ``person.*`` and the
+        # trackers that belong to a person (kept current by the integration
+        # via ``set_person_trackers``). Every other tracker — a router
+        # integration creates one per device on the network — stays evidence:
+        # the PC's tracker says something about who is home, but it is nobody.
+        # Installed before any restore, because the core keeps only the
+        # targets its predicate accepts.
+        self._person_trackers: frozenset[str] = frozenset()
+        self._lagebild: dict[str, Any] = {}
+        self._lagebild_at: float | None = None
+        self._associations_at: float | None = None
+        cortex = self.association_cortex
+        if cortex is not None:
+            cortex.ziel_pruefer = self._is_presence_target
 
     # ---- Entity wiring ----------------------------------------------
 
@@ -81,6 +111,22 @@ class LiteEngine:
     def observe(self, payload: dict[str, Any] | None = None) -> EngineSnapshot:
         """Ingest one observation and advance internal state."""
         core_snap = self._core.observe(payload or {})
+        if "skipped" in (core_snap.extra or {}):
+            # A filtered observation (unregistered entity, no room, repeat,
+            # burst) carries no reading of its own. With standard tracking
+            # most changes are filtered, so projecting them flickered the
+            # surprise to 0 and the anomaly to off between real events. Keep
+            # the last real reading; only the counters move. The decision is
+            # NOT kept: it belongs to the event that produced it, and carrying
+            # it over would execute it again on every filtered change.
+            self._snapshot = replace(
+                self._snapshot,
+                learning_state=core_snap.learning_state,
+                tick_count=core_snap.tick_count,
+                extra={k: v for k, v in self._snapshot.extra.items() if k != "decision"},
+            )
+            return self._snapshot
+        next_event, next_p = self._first_prediction(getattr(core_snap, "predictions", None))
         self._snapshot = EngineSnapshot(
             surprise=float(core_snap.surprise),
             # Anomalie-Entscheidung kommt vom Core: dort ist die Schwelle
@@ -90,8 +136,22 @@ class LiteEngine:
             tick_count=core_snap.tick_count,
             token=getattr(core_snap, "token", None),
             extra=core_snap.extra or {},
+            next_event=next_event,
+            next_event_probability=next_p,
         )
         return self._snapshot
+
+    def _first_prediction(self, predictions: Any) -> tuple[str | None, float | None]:
+        """Decode the head of the core's prediction list ``(token_id, p, …)``
+        into ``room.semantic.state`` — ``None`` while the core has no guess
+        (cold start)."""
+        if not predictions:
+            return None, None
+        try:
+            token_id, probability = predictions[0][0], float(predictions[0][1])
+            return self._core.thalamus.decode_token(token_id), round(probability, 3)
+        except Exception:  # noqa: BLE001 - a foreign shape is no crash
+            return None, None
 
     def evaluate(self, payload: dict[str, Any] | None = None) -> EngineSnapshot:
         """Service-entry: run one tick and return the current snapshot."""
@@ -178,6 +238,136 @@ class LiteEngine:
         """Number of events the hippocampus actually learned from (post-filter)."""
         hippo = getattr(self._core, "hippocampus", None)
         return int(getattr(hippo, "total_events", 0))
+
+    # ---- Stufe 3: Lagebild + Börse (kontinuum-core >= 0.7) ----------
+
+    @property
+    def association_cortex(self):
+        """The core's Lagebild (``AssociationCortex``), or ``None`` (core < 0.7)."""
+        return getattr(self._core, "association_cortex", None)
+
+    @property
+    def supports_lagebild(self) -> bool:
+        """True when the installed core keeps a Lagebild (>= 0.7.0)."""
+        return self.association_cortex is not None and lage_setzen is not None
+
+    def _is_presence_target(self, entity_id: str) -> bool:
+        return entity_id.startswith("person.") or entity_id in self._person_trackers
+
+    def set_person_trackers(self, trackers: Iterable[str]) -> None:
+        """The trackers that belong to a person (attribute ``device_trackers``
+        of the ``person.*`` entities): presence targets, never evidence."""
+        self._person_trackers = frozenset(trackers)
+
+    def feed_lagebild(self, entity_id: str, state: Any, timestamp: Any = None) -> None:
+        """Put one state into the Lagebild only — no event for the learners.
+
+        For what the event path holds back although it is part of the
+        situation: changes while Home-Only pauses learning, the echo of our own
+        actions, and at startup the current state of what the thalamus does
+        not track (persons above all). ``observe`` feeds the Lagebild itself,
+        so never call both for one change. A no-op on cores < 0.7.
+        """
+        cortex = self.association_cortex
+        if cortex is None or lage_setzen is None or not entity_id:
+            return
+        lage_setzen(cortex, self._core.thalamus, entity_id, state, timestamp)
+
+    def lagebild(self, now: Any = None, associations: bool = True) -> dict[str, Any]:
+        """What the Lagebild sensors show (kept as :attr:`lagebild_data`).
+
+        ``presence`` per target: how likely it is home, inferred from the
+        devices alone — the target's own trackers are its label, never
+        evidence — with the strongest evidence, what the target itself
+        reports, and how often the inference matched that report so far.
+        ``associations``: the strongest "if A, then B" of the pair table. They
+        read the whole table (quadratic), so callers pass
+        ``associations=False`` (keeping the last ones) except now and then
+        (see :attr:`associations_age`). ``now`` advances the Lagebild's
+        clock — time passes without events, too. ``{}`` on cores < 0.7.
+        """
+        cortex = self.association_cortex
+        if cortex is None:
+            return {}
+        if now is not None:
+            cortex.tick(now)
+        stats = cortex.stats
+        checks = stats.get("anwesenheit") or {}
+        presence: dict[str, Any] = {}
+        for target in list(cortex.ziele):
+            reading = cortex.anwesenheit(target)
+            if reading.get("zuhause") is None:
+                continue  # nothing learned yet
+            check = checks.get(target) or {}
+            presence[target] = {
+                "home": round(reading["zuhause"], 3),
+                "most_likely": reading["wahrscheinlichster"],
+                "reported": cortex.zustand.get(target),
+                "evidence": [[feature, round(weight, 1)] for feature, weight in reading["belege"]],
+                "time_of_day": reading["uhrzeit"],
+                "ticks": reading["takte"],
+                "checked": check.get("takte_geprueft", 0),
+                "hit_rate": check.get("treffer"),
+            }
+        if associations:
+            pairs = [
+                {
+                    "if": pair["wenn"],
+                    "then": pair["dann"],
+                    "p": pair["p"],
+                    "lift": pair["lift"],
+                    "ticks": pair["takte"],
+                }
+                for pair in cortex.zusammenhaenge(top=LAGEBILD_ASSOCIATIONS)
+            ]
+            self._associations_at = time.monotonic()
+        else:
+            pairs = self._lagebild.get("associations", [])
+        self._lagebild = {
+            "presence": presence,
+            "associations": pairs,
+            "learning": {
+                "entities_in_view": stats.get("entitaeten_im_blick", 0),
+                "targets": stats.get("ziele", []),
+                "ticks": stats.get("takte", 0),
+                "pair_features": stats.get("paar_merkmale", 0),
+            },
+        }
+        self._lagebild_at = time.monotonic()
+        return self._lagebild
+
+    @property
+    def lagebild_data(self) -> dict[str, Any]:
+        """The last result of :meth:`lagebild` (``{}`` before the first)."""
+        return self._lagebild
+
+    @property
+    def lagebild_age(self) -> float:
+        """Seconds since :meth:`lagebild` last ran (``inf`` before the first)."""
+        if self._lagebild_at is None:
+            return float("inf")
+        return time.monotonic() - self._lagebild_at
+
+    @property
+    def associations_age(self) -> float:
+        """Seconds since the associations were last recomputed (``inf`` before)."""
+        if self._associations_at is None:
+            return float("inf")
+        return time.monotonic() - self._associations_at
+
+    @property
+    def boerse(self) -> dict[str, Any] | None:
+        """The Börse's balance (core >= 0.7): how often its first guess for
+        the next event was right, and the weight it learned per expert."""
+        claustrum = getattr(self._core, "claustrum", None)
+        stats = getattr(claustrum, "stats", None) if claustrum is not None else None
+        if not isinstance(stats, dict):
+            return None
+        return {
+            "hit_rate": stats.get("trefferquote"),
+            "events": stats.get("ereignisse"),
+            "weights": stats.get("gewichte"),
+        }
 
     # ---- Configuration: preset / modes ------------------------------
 
