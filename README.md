@@ -164,11 +164,19 @@ nützlich, wenn das Modell „verdorben" ist und neu anlernen soll.
 
 ### HACS (empfohlen)
 
+Dieser Knopf öffnet das Repository in deiner eigenen HACS-Installation und trägt es dabei automatisch als benutzerdefiniertes Repository ein:
+
+[![Öffne deine Home-Assistant-Instanz und dieses Repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Chance-Konstruktion&repository=ha-kontinuum-lite&category=integration)
+
+Oder von Hand:
+
 1. HACS → Integrations → Custom Repositories
 2. `https://github.com/Chance-Konstruktion/ha-kontinuum-lite` als **Integration** hinzufügen
 3. "KONTINUUM Lite" installieren
 4. Home Assistant neu starten
 5. Einstellungen → Integrationen → "KONTINUUM Lite" hinzufügen
+
+   [![Öffne deine Home-Assistant-Instanz und starte die Einrichtung der Integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=kontinuum_lite)
 
 ### Manuell
 
