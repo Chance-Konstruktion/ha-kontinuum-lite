@@ -117,3 +117,72 @@ def test_lite_reconstructed_decision_defaults_invalid_token_id_safely():
             }
         )
         assert decision.token_id == 0
+
+
+
+def test_lite_service_call_normalizes_legacy_media_domain(monkeypatch):
+    engine = LiteEngine()
+    monkeypatch.setattr(
+        engine.prefrontal,
+        "get_service_call",
+        lambda _decision: {
+            "domain": "media",
+            "service": "media_play",
+            "entity_id": "media_player.tv",
+            "data": {"entity_id": "media_player.tv"},
+        },
+    )
+
+    call = engine.service_call_for(
+        {
+            "token": "living_room.media.playing",
+            "entity_id": "media_player.tv",
+        }
+    )
+
+    assert call["domain"] == "media_player"
+    assert call["service"] == "media_play"
+
+
+def test_lite_service_call_fills_missing_legacy_climate_mapping(monkeypatch):
+    engine = LiteEngine()
+    monkeypatch.setattr(engine.prefrontal, "get_service_call", lambda _decision: None)
+
+    call = engine.service_call_for(
+        {
+            "token": "living_room.climate.heat",
+            "entity_id": "climate.living_room",
+        }
+    )
+
+    assert call == {
+        "domain": "climate",
+        "service": "set_hvac_mode",
+        "entity_id": "climate.living_room",
+        "data": {"entity_id": "climate.living_room", "hvac_mode": "heat"},
+    }
+
+
+def test_lite_service_call_normalizes_legacy_climate_alias(monkeypatch):
+    engine = LiteEngine()
+    monkeypatch.setattr(
+        engine.prefrontal,
+        "get_service_call",
+        lambda _decision: {
+            "domain": "climate",
+            "service": "set_hvac_mode",
+            "entity_id": "climate.living_room",
+            "data": {"entity_id": "climate.living_room", "hvac_mode": "cooling"},
+        },
+    )
+    decision = engine._decision_obj(
+        {
+            "token": "living_room.climate.cooling",
+            "entity_id": "climate.living_room",
+            "stage": "CONFIRM",
+        }
+    )
+
+    call = engine.get_service_call_obj(decision)
+
+    assert call["data"]["hvac_mode"] == "cool"
