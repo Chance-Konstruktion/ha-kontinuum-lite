@@ -452,7 +452,7 @@ class LiteEngine:
         obj.token = decision.get("token", "")
         try:
             obj.token_id = int(decision.get("token_id") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             obj.token_id = 0
         obj.entity_id = decision.get("entity_id", "")
         obj.confidence = decision.get("confidence", 0.0)

@@ -107,13 +107,13 @@ def test_lite_reconstructed_decision_tolerates_older_core_snapshots():
 
 def test_lite_reconstructed_decision_defaults_invalid_token_id_safely():
     engine = LiteEngine()
-    decision = engine._decision_obj(
-        {
-            "token": "kitchen.light.on",
-            "token_id": "not-an-integer",
-            "entity_id": "light.kitchen",
-            "stage": "CONFIRM",
-        }
-    )
-
-    assert decision.token_id == 0
+    for invalid in ("not-an-integer", float("inf"), float("nan")):
+        decision = engine._decision_obj(
+            {
+                "token": "kitchen.light.on",
+                "token_id": invalid,
+                "entity_id": "light.kitchen",
+                "stage": "CONFIRM",
+            }
+        )
+        assert decision.token_id == 0
