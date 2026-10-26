@@ -13,6 +13,7 @@ import pytest
 
 kontinuum_core = pytest.importorskip("kontinuum_core")
 from kontinuum_core import KontinuumEngine  # noqa: E402
+from custom_components.kontinuum_lite.engine import LiteEngine  # noqa: E402
 
 
 def _observe(engine, entity_id, new_state, old_state=None):
@@ -73,3 +74,46 @@ def test_persistence_roundtrip_preserves_learning():
 
     assert restored.tick_count == engine.tick_count
     assert restored.hippocampus.total_events == engine.hippocampus.total_events
+
+
+
+def test_lite_reconstructed_decision_preserves_core_token_id():
+    engine = LiteEngine()
+    decision = engine._decision_obj(
+        {
+            "token": "kitchen.light.on",
+            "token_id": 17,
+            "entity_id": "light.kitchen",
+            "stage": "CONFIRM",
+            "confidence": 0.8,
+        }
+    )
+
+    assert decision.token_id == 17
+
+
+def test_lite_reconstructed_decision_tolerates_older_core_snapshots():
+    engine = LiteEngine()
+    decision = engine._decision_obj(
+        {
+            "token": "kitchen.light.on",
+            "entity_id": "light.kitchen",
+            "stage": "CONFIRM",
+        }
+    )
+
+    assert decision.token_id == 0
+
+
+def test_lite_reconstructed_decision_defaults_invalid_token_id_safely():
+    engine = LiteEngine()
+    decision = engine._decision_obj(
+        {
+            "token": "kitchen.light.on",
+            "token_id": "not-an-integer",
+            "entity_id": "light.kitchen",
+            "stage": "CONFIRM",
+        }
+    )
+
+    assert decision.token_id == 0

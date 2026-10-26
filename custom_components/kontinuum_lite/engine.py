@@ -430,9 +430,10 @@ class LiteEngine:
     def last_decision(self) -> dict[str, Any] | None:
         """The advisory decision the core computed on the last observation.
 
-        Shape: ``{"token", "entity_id", "stage", "confidence", "utility",
-        "risk", "source", "n_obs", "reasons"}`` — see kontinuum-core's
-        ``_build_extra``. ``None`` when the core produced no decision.
+        Shape: ``{"token", "token_id", "entity_id", "stage", "confidence",
+        "utility", "risk", "source", "n_obs", "reasons"}`` — see
+        kontinuum-core's ``_build_extra``. ``token_id`` is optional when
+        running with an older core; ``None`` when the core produced no decision.
         """
         dec = self._snapshot.extra.get("decision")
         return dec if isinstance(dec, dict) else None
@@ -440,15 +441,19 @@ class LiteEngine:
     def _decision_obj(self, decision: dict[str, Any]):
         """Rebuild a core ``Decision`` from the snapshot dict.
 
-        The engine only surfaces the decision as a dict; the core's
-        ``get_service_call`` / ``queue_confirm`` want the object. token_id is
-        not surfaced (only used for confirm-id uniqueness and best-effort
-        reinforcement), so it stays 0.
+        The engine surfaces the decision as a dict; the core's
+        ``get_service_call`` / ``queue_confirm`` want the object. Preserve
+        ``token_id`` when the installed core exposes it, while remaining
+        compatible with snapshots from older core versions.
         """
         if Decision is None:
             return None
         obj = Decision()
         obj.token = decision.get("token", "")
+        try:
+            obj.token_id = int(decision.get("token_id") or 0)
+        except (TypeError, ValueError):
+            obj.token_id = 0
         obj.entity_id = decision.get("entity_id", "")
         obj.confidence = decision.get("confidence", 0.0)
         obj.utility = decision.get("utility", 0.0)
