@@ -430,9 +430,10 @@ class LiteEngine:
     def last_decision(self) -> dict[str, Any] | None:
         """The advisory decision the core computed on the last observation.
 
-        Shape: ``{"token", "entity_id", "stage", "confidence", "utility",
-        "risk", "source", "n_obs", "reasons"}`` — see kontinuum-core's
-        ``_build_extra``. ``None`` when the core produced no decision.
+        Shape: ``{"token", "token_id", "entity_id", "stage", "confidence",
+        "utility", "risk", "source", "n_obs", "reasons"}`` — see
+        kontinuum-core's ``_build_extra``. ``token_id`` is optional when
+        running with an older core; ``None`` when the core produced no decision.
         """
         dec = self._snapshot.extra.get("decision")
         return dec if isinstance(dec, dict) else None
@@ -440,15 +441,19 @@ class LiteEngine:
     def _decision_obj(self, decision: dict[str, Any]):
         """Rebuild a core ``Decision`` from the snapshot dict.
 
-        The engine only surfaces the decision as a dict; the core's
-        ``get_service_call`` / ``queue_confirm`` want the object. token_id is
-        not surfaced (only used for confirm-id uniqueness and best-effort
-        reinforcement), so it stays 0.
+        The engine surfaces the decision as a dict; the core's
+        ``get_service_call`` / ``queue_confirm`` want the object. Preserve
+        ``token_id`` when the installed core exposes it, while remaining
+        compatible with snapshots from older core versions.
         """
         if Decision is None:
             return None
         obj = Decision()
         obj.token = decision.get("token", "")
+        try:
+            obj.token_id = int(decision.get("token_id") or 0)
+        except (TypeError, ValueError, OverflowError):
+            obj.token_id = 0
         obj.entity_id = decision.get("entity_id", "")
         obj.confidence = decision.get("confidence", 0.0)
         obj.utility = decision.get("utility", 0.0)
@@ -458,6 +463,58 @@ class LiteEngine:
         obj.reasons = list(decision.get("reasons", []) or [])
         obj.stage = decision.get("stage", "")
         return obj
+
+    @staticmethod
+    def _normalise_service_call(
+        service_call: dict[str, Any] | None, token: str, entity_id: str
+    ) -> dict[str, Any] | None:
+        """Normalize legacy Core outputs and fill known HA climate-mode gaps.
+
+        Core tokens describe media players as semantic "media" while Home
+        Assistant's service domain is "media_player". Older Core builds also
+        return no call for native climate tokens (heat/cool/auto/etc.). Keep
+        Lite functional against those allowed Core versions until the shared
+        contract fix is released.
+        """
+        parts = token.split(".")
+        if len(parts) != 3:
+            return service_call
+        _room, semantic, state = parts
+
+        if semantic == "media" and service_call and service_call.get("domain") == "media":
+            service_call = {**service_call, "domain": "media_player"}
+
+        if semantic == "climate":
+            hvac_mode = {
+                "heating": "heat",
+                "cooling": "cool",
+                "heat": "heat",
+                "cool": "cool",
+                "heat_cool": "heat_cool",
+                "auto": "auto",
+                "dry": "dry",
+                "fan_only": "fan_only",
+            }.get(state)
+            if hvac_mode is not None:
+                if service_call is None:
+                    if not entity_id:
+                        return None
+                    return {
+                        "domain": "climate",
+                        "service": "set_hvac_mode",
+                        "entity_id": entity_id,
+                        "data": {"entity_id": entity_id, "hvac_mode": hvac_mode},
+                    }
+                if service_call.get("service") == "set_hvac_mode":
+                    data = dict(service_call.get("data") or {})
+                    data["hvac_mode"] = hvac_mode
+                    service_call = {
+                        **service_call,
+                        "domain": "climate",
+                        "entity_id": service_call.get("entity_id") or entity_id,
+                        "data": data,
+                    }
+        return service_call
 
     def service_call_for(self, decision: dict[str, Any]) -> dict[str, Any] | None:
         """Translate a decision into a HA service call spec, or ``None``.
@@ -470,7 +527,10 @@ class LiteEngine:
         if pfc is None or obj is None:
             return None
         getter = getattr(pfc, "get_service_call", None)
-        return getter(obj) if callable(getter) else None
+        service_call = getter(obj) if callable(getter) else None
+        return self._normalise_service_call(
+            service_call, str(decision.get("token", "")), str(decision.get("entity_id", ""))
+        )
 
     def queue_confirm(
         self, decision: dict[str, Any], reasoning: str = "", context: dict | None = None
@@ -514,7 +574,14 @@ class LiteEngine:
         """Service-call spec for an already-materialised ``Decision`` object."""
         pfc = self.prefrontal
         getter = getattr(pfc, "get_service_call", None) if pfc else None
-        return getter(decision_obj) if callable(getter) and decision_obj else None
+        if not callable(getter) or not decision_obj:
+            return None
+        service_call = getter(decision_obj)
+        return self._normalise_service_call(
+            service_call,
+            str(getattr(decision_obj, "token", "")),
+            str(getattr(decision_obj, "entity_id", "")),
+        )
 
     # ---- Feedback / own-action bookkeeping --------------------------
 
