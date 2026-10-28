@@ -9,6 +9,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Chance-Konstruktion/ha-kontinuum-lite/issues",
   "loggers": ["kontinuum_core"],
-  "requirements": ["kontinuum-core>=0.7.0,<0.8"],
+  "requirements": ["kontinuum-core>=0.7.2,<0.8"],
   "version": "0.7.0"
 }

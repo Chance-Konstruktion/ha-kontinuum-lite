@@ -186,3 +186,29 @@ def test_lite_service_call_normalizes_legacy_climate_alias(monkeypatch):
     call = engine.get_service_call_obj(decision)
 
     assert call["data"]["hvac_mode"] == "cool"
+
+
+def test_confirm_ids_do_not_collide_without_token_id(monkeypatch):
+    """Two same-second decisions lacking ``token_id`` get distinct confirm IDs.
+
+    Core >= 0.7.2 issues independent IDs; older cores keyed on time + token_id
+    (0 here), so the test skips for them with a reason.
+    """
+    from importlib.metadata import version
+
+    major_minor_patch = tuple(int(p) for p in version("kontinuum-core").split(".")[:3] if p.isdigit())
+    if major_minor_patch < (0, 7, 2):
+        pytest.skip("core < 0.7.2 builds confirm IDs from time + token_id")
+
+    from kontinuum_core import prefrontal_cortex as pc
+
+    monkeypatch.setattr(pc.time, "time", lambda: 1_700_000_000.0)
+    engine = LiteEngine()
+    snapshot = {"token": "kitchen.light.on", "entity_id": "light.kitchen", "stage": "CONFIRM"}
+    other = dict(snapshot, entity_id="light.lamp")
+
+    first = engine.queue_confirm(snapshot)
+    second = engine.queue_confirm(other)
+
+    assert first and second and first != second
+    assert len(engine.pending_confirms()) == 2
